@@ -1,4 +1,4 @@
-#include "Core/VulkanCore.h"
+#include "Core/vulkan_core.h"
 
 // Vulkanの各種関数や構造体、列挙型を提供してくれるヘッダー
 #include <vulkan/vulkan.h>
