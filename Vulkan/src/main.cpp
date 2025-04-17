@@ -12,7 +12,7 @@
 #include <cstdlib>
 
 // Vulkanの基本機能を宣言したヘッダーファイル
-#include "VulkanCore.h"
+#include "Core/VulkanCore.h"
 
 int main() {
 	Core::VulkanApplication app;
