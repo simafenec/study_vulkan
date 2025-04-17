@@ -14,40 +14,38 @@ namespace Core
 {
 	class VulkanApplication {
 	public:
-		// 画面の横幅(px)
-		const uint32_t WIDTH = 800;
-		// 画面の縦幅(px)
-		const uint32_t HEIGHT = 600;
+		const uint32_t kWIDTH = 800;
+		const uint32_t kHEIGHT = 600;
 
-	private:
-		// GLFWのウィンドウハンドラへのポインタ
-		GLFWwindow* window;
 	public:
 		/**
 		* @fn
-		* Vulkanの初期化を行ったのち、メインループを起動する。
 		* @brief Vulkanの描画処理を起動する。
 		*/
-		void run();
+		void Run();
+
 	private:
 		/**
-		* GLFWのウィンドウ設定を初期化する
+		* @brief GLFWのウィンドウ設定を初期化する
 		*/
-		void initWindow();
+		void InitWindow();
 		/**
 		* @fn
 		* @brief Vulkanの各種コンポーネントを初期化する。
 		*/
-		void initVulkan();
+		void InitVulkan();
 		/**
 		* @fn
 		* @brief Vulkanの描画ループを起動する。
 		*/
-		void mainLoop();
+		void MainLoop();
 		/**
 		* @fn
 		* @brief Vulkanで確保した各種リソースを解放する。
 		*/
-		void cleanUp();
+		void CleanUp();
+
+	private:
+		GLFWwindow* window_;
 	};
 }
