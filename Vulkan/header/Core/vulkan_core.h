@@ -56,19 +56,6 @@ namespace Core
 
 		/**
 		* @fn
-		* @brief Vulkan アプリケーションの基本情報を設定する
-		*/
-		void CreateVkApplicationInfo(VkApplicationInfo& info);
-
-		/**
-		* @fn
-		* @brief VkInstanceの生成設定を行う
-		* @detail デバイスにかかわらず全てのプログラムに適用する拡張(extensions)と使用するバリデーションレイヤの設定を行う。
-		*/
-		void CreateVkInstanceCreateInfo(VkInstanceCreateInfo& create_info, const VkApplicationInfo& application_info);
-		
-		/**
-		* @fn
 		* @brief
 		* 要求されている拡張機能が全てサポートされているかをチェックする
 		* @detail
@@ -79,6 +66,12 @@ namespace Core
 		* 
 		*/
 		bool CheckExtensionsAvailable(std::vector<const char*> required_instance);
+
+		/**
+		* @fn
+		* @brief 必要な拡張機能のリストを取得する。
+		*/
+		std::vector<const char*> getRequiredExtensions();
 
 	private:
 		GLFWwindow* window_;
