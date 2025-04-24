@@ -1,8 +1,33 @@
+/**
+* @file vulkan_core.cpp
+* @brief Vulkanの描画に関する基本的な処理を実装するクラスの定義ファイル
+* @author はっとり
+* @date 2025/4/17
+*/
+
 #include "Core/vulkan_core.h"
 
 #include<stdexcept>
+#include<optional>
 
 namespace Core {
+	/**
+	* @brief
+	* キューファミリーのインデックスを扱う構造体
+	*/
+	struct QueueFamilyIndices {
+		std::optional<uint32_t> graphics_family_;
+
+		/**
+		* @fn
+		* @brief グラフィックスファミリーの条件を満たしているかどうか
+		*/
+		bool IsComplete() const {
+			return graphics_family_.has_value();
+		}
+	};
+
+
 	void VulkanApplication::InitWindow() {
 		glfwInit();
 		// GLFWはOpenGLのcontextを作るために設計されているため、まずそれを制御する必要がある。
@@ -16,6 +41,7 @@ namespace Core {
 	void VulkanApplication::InitVulkan() {
 		CreateVkInstance();
 		SetupDebugMessenger();
+		PickPhysicalDevice();
 	}
 	void VulkanApplication::MainLoop() {
 		// エラーが出るまではウィンドウに対するイベントを観察し続ける
@@ -202,6 +228,62 @@ namespace Core {
 		auto proc = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance_, "vkDestroyDebugUtilsMessengerEXT");
 		if (proc != nullptr) {
 			proc(instance_, debug_messenger_, p_allocator);
+		}
+	}
+
+	QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) {
+		QueueFamilyIndices indices;
+		uint32_t queue_family_count = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
+		std::vector<VkQueueFamilyProperties> queue_family_properties(queue_family_count);
+		vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_family_properties.data());
+		// グラフィックコマンドをサポートしているキューのインデックスを取得する。
+		int graphics_queue_index = 0;
+		for (const auto& prop : queue_family_properties) {
+			if (prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+				indices.graphics_family_ = graphics_queue_index;
+			}
+			if (indices.IsComplete()) {
+				break;
+			}
+			graphics_queue_index += 1;
+		}
+		return indices;
+	}
+	/**
+	* @fn
+	* @brief
+	* デバイスが適当かどうかを確認する。
+	*/
+	bool IsDeviceSuitable(VkPhysicalDevice device) {
+		/*
+		VkPhysicalDeviceProperties device_properties;
+		VkPhysicalDeviceFeatures device_features;
+		vkGetPhysicalDeviceProperties(device, &device_properties);
+		vkGetPhysicalDeviceFeatures(device, &device_features);
+
+		return device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+			&& device_features.geometryShader;
+		*/
+		QueueFamilyIndices indices = FindQueueFamilies(device);
+		return indices.IsComplete();
+	}
+	void VulkanApplication::PickPhysicalDevice() {
+		uint32_t device_count = 0;
+		vkEnumeratePhysicalDevices(instance_, &device_count, nullptr);
+		if (device_count == 0) {
+			throw std::runtime_error("Vulkanをサポートしているデバイスが存在しません");
+		}
+		std::vector<VkPhysicalDevice> devices(device_count);
+		vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
+		for (const auto& device : devices) {
+			if (IsDeviceSuitable(device)) {
+				physical_device_ = device;
+				break;
+			}
+		}
+		if (physical_device_ == VK_NULL_HANDLE) {
+			throw std::runtime_error("条件に適したGPUが存在しませんでした");
 		}
 	}
 }

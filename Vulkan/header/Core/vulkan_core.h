@@ -151,10 +151,17 @@ namespace Core
 			}
 			return VK_FALSE;
 		}
+		/**
+		* @fn
+		* @brief
+		* Vulkanの描画に使用する物理デバイスを選択する
+		*/
+		void PickPhysicalDevice();
 
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
 		VkDebugUtilsMessengerEXT debug_messenger_;
+		VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
 	};
 }
