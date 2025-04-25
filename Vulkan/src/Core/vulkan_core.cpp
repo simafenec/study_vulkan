@@ -42,6 +42,7 @@ namespace Core {
 		CreateVkInstance();
 		SetupDebugMessenger();
 		PickPhysicalDevice();
+		CreateLogicalDevice();
 	}
 	void VulkanApplication::MainLoop() {
 		// エラーが出るまではウィンドウに対するイベントを観察し続ける
@@ -54,6 +55,8 @@ namespace Core {
 		if (kEnableValidationLayers) {
 			DestroyDebugUtilsMessenger(nullptr);
 		}
+		// インスタンスは最後に破棄すること
+		vkDestroyDevice(device_, nullptr);
 		vkDestroyInstance(instance_, nullptr);
 		glfwDestroyWindow(window_);
 		glfwTerminate();
@@ -285,5 +288,47 @@ namespace Core {
 		if (physical_device_ == VK_NULL_HANDLE) {
 			throw std::runtime_error("条件に適したGPUが存在しませんでした");
 		}
+	}
+
+	void VulkanApplication::CreateLogicalDevice() {
+		// キューの情報をまずまとめる。
+		QueueFamilyIndices indices = FindQueueFamilies(physical_device_);
+
+		VkDeviceQueueCreateInfo queue_create_info{};
+		queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queue_create_info.queueFamilyIndex = indices.graphics_family_.value();
+		// 現在利用可能なドライバでは、キューファミリーごとに少数のキューしか作成できず、実際には複数のキューは必要ない。
+		// これは、すべてのコマンドバッファを複数のスレッドで作成し、
+		// オーバーヘッドの少ない単一の呼び出しでメインスレッドに一括送信できるためである。
+		queue_create_info.queueCount = 1;
+		// キューの優先度はたとえキューが一つでも設定する必要がある。
+		float queue_priority = 1.0f;
+		queue_create_info.pQueuePriorities = &queue_priority;
+
+		// 論理デバイスの特徴を次にまとめる。
+		// 現状は何も設定しない。　今後様々な機能を使いたくなった時に適宜フラグを立てていく
+		VkPhysicalDeviceFeatures device_features{};
+		
+		// 論理デバイスの生成情報を次にまとめる。
+		VkDeviceCreateInfo create_info{};
+		create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+		create_info.pQueueCreateInfos = &queue_create_info;
+		create_info.queueCreateInfoCount = 1;
+		create_info.pEnabledFeatures = &device_features;
+
+		// デバイス固有の拡張機能やバリデーションレイヤを設定する。
+		// 拡張機能やバリデーションレイヤはVkInstanceで設定するものと同じである。
+		create_info.enabledExtensionCount = 0;
+		if (kEnableValidationLayers) {
+			create_info.enabledLayerCount = static_cast<uint32_t>(kValidationLayers.size());
+			create_info.ppEnabledLayerNames = kValidationLayers.data();
+		}
+		else {
+			create_info.enabledLayerCount = 0;
+		}
+		if (vkCreateDevice(physical_device_, &create_info, nullptr, &device_) != VK_SUCCESS) {
+			throw std::runtime_error("論理デバイスの生成に失敗しました！");
+		}
+		vkGetDeviceQueue(device_, indices.graphics_family_.value(), 0, &graphics_queue_);
 	}
 }

@@ -158,10 +158,19 @@ namespace Core
 		*/
 		void PickPhysicalDevice();
 
+		/**
+		* @fn
+		* @brief
+		* 論理デバイスを作成する。
+		*/
+		void CreateLogicalDevice();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
 		VkDebugUtilsMessengerEXT debug_messenger_;
 		VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
+		VkDevice device_;
+		VkQueue graphics_queue_;
 	};
 }
