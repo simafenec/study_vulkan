@@ -165,6 +165,13 @@ namespace Core
 		*/
 		void CreateLogicalDevice();
 
+		/**
+		* @fn
+		* @brief
+		* ウィンドウサーフェスを生成する。
+		*/
+		void CreateSurface();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -172,5 +179,7 @@ namespace Core
 		VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
 		VkDevice device_;
 		VkQueue graphics_queue_;
+		VkQueue present_queue_;
+		VkSurfaceKHR surface_;
 	};
 }

@@ -9,6 +9,7 @@
 
 #include<stdexcept>
 #include<optional>
+#include<set>
 
 namespace Core {
 	/**
@@ -17,13 +18,14 @@ namespace Core {
 	*/
 	struct QueueFamilyIndices {
 		std::optional<uint32_t> graphics_family_;
+		std::optional<uint32_t> present_family_;
 
 		/**
 		* @fn
 		* @brief グラフィックスファミリーの条件を満たしているかどうか
 		*/
 		bool IsComplete() const {
-			return graphics_family_.has_value();
+			return graphics_family_.has_value() && present_family_.has_value();
 		}
 	};
 
@@ -41,6 +43,7 @@ namespace Core {
 	void VulkanApplication::InitVulkan() {
 		CreateVkInstance();
 		SetupDebugMessenger();
+		CreateSurface();
 		PickPhysicalDevice();
 		CreateLogicalDevice();
 	}
@@ -57,6 +60,7 @@ namespace Core {
 		}
 		// インスタンスは最後に破棄すること
 		vkDestroyDevice(device_, nullptr);
+		vkDestroySurfaceKHR(instance_, surface_, nullptr);
 		vkDestroyInstance(instance_, nullptr);
 		glfwDestroyWindow(window_);
 		glfwTerminate();
@@ -234,7 +238,7 @@ namespace Core {
 		}
 	}
 
-	QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device) {
+	QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface) {
 		QueueFamilyIndices indices;
 		uint32_t queue_family_count = 0;
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
@@ -245,6 +249,12 @@ namespace Core {
 		for (const auto& prop : queue_family_properties) {
 			if (prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
 				indices.graphics_family_ = graphics_queue_index;
+			}
+			// Presentation Queueの存在チェック
+			VkBool32 presentSupported = false;
+			vkGetPhysicalDeviceSurfaceSupportKHR(device, graphics_queue_index, surface, &presentSupported);
+			if (presentSupported) {
+				indices.present_family_ = graphics_queue_index;
 			}
 			if (indices.IsComplete()) {
 				break;
@@ -258,7 +268,7 @@ namespace Core {
 	* @brief
 	* デバイスが適当かどうかを確認する。
 	*/
-	bool IsDeviceSuitable(VkPhysicalDevice device) {
+	bool IsDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface) {
 		/*
 		VkPhysicalDeviceProperties device_properties;
 		VkPhysicalDeviceFeatures device_features;
@@ -268,7 +278,7 @@ namespace Core {
 		return device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
 			&& device_features.geometryShader;
 		*/
-		QueueFamilyIndices indices = FindQueueFamilies(device);
+		QueueFamilyIndices indices = FindQueueFamilies(device, surface);
 		return indices.IsComplete();
 	}
 	void VulkanApplication::PickPhysicalDevice() {
@@ -280,7 +290,7 @@ namespace Core {
 		std::vector<VkPhysicalDevice> devices(device_count);
 		vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
 		for (const auto& device : devices) {
-			if (IsDeviceSuitable(device)) {
+			if (IsDeviceSuitable(device, surface_)) {
 				physical_device_ = device;
 				break;
 			}
@@ -292,18 +302,23 @@ namespace Core {
 
 	void VulkanApplication::CreateLogicalDevice() {
 		// キューの情報をまずまとめる。
-		QueueFamilyIndices indices = FindQueueFamilies(physical_device_);
+		QueueFamilyIndices indices = FindQueueFamilies(physical_device_, surface_);
 
-		VkDeviceQueueCreateInfo queue_create_info{};
-		queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queue_create_info.queueFamilyIndex = indices.graphics_family_.value();
-		// 現在利用可能なドライバでは、キューファミリーごとに少数のキューしか作成できず、実際には複数のキューは必要ない。
-		// これは、すべてのコマンドバッファを複数のスレッドで作成し、
-		// オーバーヘッドの少ない単一の呼び出しでメインスレッドに一括送信できるためである。
-		queue_create_info.queueCount = 1;
-		// キューの優先度はたとえキューが一つでも設定する必要がある。
+		std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
+		std::set<uint32_t> unique_queue_families = { indices.graphics_family_.value(), indices.present_family_.value() };
 		float queue_priority = 1.0f;
-		queue_create_info.pQueuePriorities = &queue_priority;
+		for (uint32_t queue_family : unique_queue_families) {
+			VkDeviceQueueCreateInfo queue_create_info{};
+			queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queue_create_info.queueFamilyIndex = queue_family;
+			// 現在利用可能なドライバでは、キューファミリーごとに少数のキューしか作成できず、実際には複数のキューは必要ない。
+			// これは、すべてのコマンドバッファを複数のスレッドで作成し、
+			// オーバーヘッドの少ない単一の呼び出しでメインスレッドに一括送信できるためである。
+			queue_create_info.queueCount = 1;
+			// キューの優先度はたとえキューが一つでも設定する必要がある。
+			queue_create_info.pQueuePriorities = &queue_priority;
+			queue_create_infos.push_back(queue_create_info);
+		}
 
 		// 論理デバイスの特徴を次にまとめる。
 		// 現状は何も設定しない。　今後様々な機能を使いたくなった時に適宜フラグを立てていく
@@ -312,8 +327,8 @@ namespace Core {
 		// 論理デバイスの生成情報を次にまとめる。
 		VkDeviceCreateInfo create_info{};
 		create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		create_info.pQueueCreateInfos = &queue_create_info;
-		create_info.queueCreateInfoCount = 1;
+		create_info.pQueueCreateInfos = queue_create_infos.data();
+		create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
 		create_info.pEnabledFeatures = &device_features;
 
 		// デバイス固有の拡張機能やバリデーションレイヤを設定する。
@@ -330,5 +345,14 @@ namespace Core {
 			throw std::runtime_error("論理デバイスの生成に失敗しました！");
 		}
 		vkGetDeviceQueue(device_, indices.graphics_family_.value(), 0, &graphics_queue_);
+		vkGetDeviceQueue(device_, indices.present_family_.value(), 0, &present_queue_);
+	}
+
+	void VulkanApplication::CreateSurface() {
+		// glfwのウィンドウサーフェス生成を使う
+		// 環境に依存せず生成できる
+		if (glfwCreateWindowSurface(instance_, window_, nullptr, &surface_) != VK_SUCCESS) {
+			throw std::runtime_error("ウィンドウサーフェスの生成に失敗しました！");
+		}
 	}
 }
