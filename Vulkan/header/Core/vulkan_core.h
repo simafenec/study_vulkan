@@ -14,9 +14,36 @@
 // Vulkanの各種関数や構造体、列挙型を提供してくれるヘッダー
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+#include<optional>
 
 namespace Core
 {
+	/**
+	* @brief
+	* キューファミリーのインデックスを扱う構造体
+	*/
+	struct QueueFamilyIndices {
+		std::optional<uint32_t> graphics_family_;
+		std::optional<uint32_t> present_family_;
+
+		/**
+		* @fn
+		* @brief グラフィックスファミリーの条件を満たしているかどうか
+		*/
+		bool IsComplete() const {
+			return graphics_family_.has_value() && present_family_.has_value();
+		}
+	};
+	/**
+	* @brief
+	* スワップチェインの詳細な情報を扱う構造体
+	*/
+	struct SwapChainSupportDetails {
+		VkSurfaceCapabilitiesKHR capabilities;
+		std::vector<VkSurfaceFormatKHR> formats;
+		std::vector<VkPresentModeKHR> present_modes;
+	};
+
 	class VulkanApplication {
 	public:
 		const uint32_t kWidth = 800;
@@ -24,6 +51,9 @@ namespace Core
 	private:
 		const std::vector<const char*> kValidationLayers = {
 			"VK_LAYER_KHRONOS_validation"
+		};
+		const std::vector<const char*> kDeviceExtensions = {
+			VK_KHR_SWAPCHAIN_EXTENSION_NAME
 		};
 #ifdef NDEBUG
 		const bool kEnableValidationLayers = false;
@@ -123,6 +153,19 @@ namespace Core
 		void DestroyDebugUtilsMessenger(
 			VkAllocationCallbacks* p_allocator
 		);
+		/**
+		* @fn
+		* @brief
+		* Vulkanの各コマンド発行に適切なキューファミリーを探す
+		*/
+		QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice device);
+
+		/**
+		* @fn
+		* @brief
+		* 引数に与えられたデバイスが要件を満たすかどうかを確認する
+		*/
+		bool IsDeviceSuitable(VkPhysicalDevice device);
 
 		/**
 		* @fn
@@ -172,6 +215,48 @@ namespace Core
 		*/
 		void CreateSurface();
 
+		/**
+		* @fn
+		* @brief
+		* 物理デバイスが拡張機能をサポートしているかどうかを確認する。
+		*/
+		bool CheckDeviceExtensionSupport(VkPhysicalDevice device);
+
+		/**
+		* @fn
+		* @brief
+		* スワップチェインのサポートに関する詳細を調べる。
+		*/
+		SwapChainSupportDetails QuerySwapChainSupprot(VkPhysicalDevice device);
+
+		/**
+		* @fn
+		* @brief
+		* サポートしているフォーマットの中から適切なものを選択する。
+		*/
+		VkSurfaceFormatKHR ChooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available_formats);
+
+		/**
+		* @fn
+		* @brief
+		* サポートしている表示モードの中から適切なものを選択する。
+		*/
+		VkPresentModeKHR ChooseSwapPresentMode(const std::vector<VkPresentModeKHR>& available_present_modes);
+
+		/**
+		* @fn
+		* @brief
+		* スワップチェイン内の画像の解像度を適切に設定する。
+		*/
+		VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
+
+		/**
+		* @fn
+		* @brief
+		* スワップチェインを生成する。
+		*/
+		void CreateSwapChain();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -181,5 +266,9 @@ namespace Core
 		VkQueue graphics_queue_;
 		VkQueue present_queue_;
 		VkSurfaceKHR surface_;
+		VkSwapchainKHR swap_chain_;
+		std::vector<VkImage> swap_chain_images_;
+		VkFormat swap_chain_image_format_;
+		VkExtent2D swap_chain_extent_;
 	};
 }
