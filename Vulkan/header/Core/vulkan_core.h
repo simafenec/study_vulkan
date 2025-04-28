@@ -257,6 +257,13 @@ namespace Core
 		*/
 		void CreateSwapChain();
 
+		/**
+		* @fn
+		* @brief
+		* スワップチェイン内の画像を扱うために使われるイメージビューを生成する。
+		*/
+		void CreateImageViews();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -268,6 +275,7 @@ namespace Core
 		VkSurfaceKHR surface_;
 		VkSwapchainKHR swap_chain_;
 		std::vector<VkImage> swap_chain_images_;
+		std::vector<VkImageView> swap_chain_image_views_;
 		VkFormat swap_chain_image_format_;
 		VkExtent2D swap_chain_extent_;
 	};
