@@ -8,6 +8,7 @@
 
 #include<vector>
 #include<iostream>
+#include<fstream>
 
 // ウィンドウ生成に関する各種機能を宣言するヘッダー
 #define GLFW_INCLUDE_VULKAN 1
@@ -39,9 +40,9 @@ namespace Core
 	* スワップチェインの詳細な情報を扱う構造体
 	*/
 	struct SwapChainSupportDetails {
-		VkSurfaceCapabilitiesKHR capabilities;
-		std::vector<VkSurfaceFormatKHR> formats;
-		std::vector<VkPresentModeKHR> present_modes;
+		VkSurfaceCapabilitiesKHR capabilities_;
+		std::vector<VkSurfaceFormatKHR> formats_;
+		std::vector<VkPresentModeKHR> present_modes_;
 	};
 
 	class VulkanApplication {
@@ -263,6 +264,45 @@ namespace Core
 		* スワップチェイン内の画像を扱うために使われるイメージビューを生成する。
 		*/
 		void CreateImageViews();
+
+		/**
+		* @fn
+		* @brief
+		* 描画コマンドを処理するグラフィックスパイプラインを生成する。
+		*/
+		void CreateGraphicsPipeline();
+
+		/**
+		* @fn
+		* @brief
+		* ファイルを読み込む
+		* @todo 別ファイルに切り出す
+		*/
+		static std::vector<char> ReadFile(const std::string& filePath) {
+			// ate : ファイルの最後から読み取りを開始する 読み取り位置を使ってファイルのサイズを決め、バッファを割り当てることができる
+			// binary : ファイルをバイナリファイルとして読み取る
+			std::ifstream file(filePath, std::ios::ate | std::ios::binary);
+			if (!file.is_open()) {
+				throw std::runtime_error("ファイルを開けませんでした");
+			}
+			// 文字数を文字列の最終文字の場所で得る
+			size_t file_size = (size_t)file.tellg();
+			std::vector<char> buffer(file_size);
+			// 文字列の先頭に戻って読み込む
+			file.seekg(0);
+			file.read(buffer.data(), file_size);
+			file.close();
+			return buffer;
+		}
+
+		/**
+		* @fn
+		* @brief
+		* シェーダーコードをラップするシェーダーモジュールを生成する
+		*/
+		VkShaderModule CreateShaderModule(
+			const std::vector<char>& code // シェーダーコード
+		);
 
 	private:
 		GLFWwindow* window_;

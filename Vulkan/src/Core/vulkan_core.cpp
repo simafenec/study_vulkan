@@ -32,6 +32,7 @@ namespace Core {
 		CreateLogicalDevice();
 		CreateSwapChain();
 		CreateImageViews();
+		CreateGraphicsPipeline();
 	}
 	void VulkanApplication::MainLoop() {
 		// エラーが出るまではウィンドウに対するイベントを観察し続ける
@@ -260,7 +261,7 @@ namespace Core {
 		bool swap_chain_adequate = false;
 		if (extension_supported) {
 			SwapChainSupportDetails swap_chain_support = QuerySwapChainSupprot(device);
-			swap_chain_adequate = !swap_chain_support.formats.empty() && !swap_chain_support.present_modes.empty();
+			swap_chain_adequate = !swap_chain_support.formats_.empty() && !swap_chain_support.present_modes_.empty();
 		}
 		return indices.IsComplete() && extension_supported && swap_chain_adequate;
 	}
@@ -357,20 +358,20 @@ namespace Core {
 	SwapChainSupportDetails VulkanApplication::QuerySwapChainSupprot(VkPhysicalDevice device) {
 		SwapChainSupportDetails details;
 		// サーフェースの基本情報を得る
-		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface_, &details.capabilities);
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface_, &details.capabilities_);
 		// フォーマット情報を得る
 		uint32_t format_count;
 		vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &format_count, nullptr);
 		if (format_count != 0) {
-			details.formats.resize(format_count);
-			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &format_count, details.formats.data());
+			details.formats_.resize(format_count);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface_, &format_count, details.formats_.data());
 		}
 		// 表示モード情報を得る
 		uint32_t present_mode_count;
 		vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface_, &present_mode_count, nullptr);
 		if (present_mode_count != 0) {
-			details.present_modes.resize(present_mode_count);
-			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface_, &present_mode_count, details.present_modes.data());
+			details.present_modes_.resize(present_mode_count);
+			vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface_, &present_mode_count, details.present_modes_.data());
 		}
 		return details;
 	}
@@ -415,14 +416,14 @@ namespace Core {
 	void VulkanApplication::CreateSwapChain() {
 		SwapChainSupportDetails swap_chain_support = QuerySwapChainSupprot(physical_device_);
 
-		VkSurfaceFormatKHR surface_format = ChooseSwapSurfaceFormat(swap_chain_support.formats);
-		VkPresentModeKHR present_mode = ChooseSwapPresentMode(swap_chain_support.present_modes);
-		VkExtent2D extent = ChooseSwapExtent(swap_chain_support.capabilities);
+		VkSurfaceFormatKHR surface_format = ChooseSwapSurfaceFormat(swap_chain_support.formats_);
+		VkPresentModeKHR present_mode = ChooseSwapPresentMode(swap_chain_support.present_modes_);
+		VkExtent2D extent = ChooseSwapExtent(swap_chain_support.capabilities_);
 
 		// スワップチェインが持てる画像数は余裕を持っておくと吉
-		uint32_t image_count = swap_chain_support.capabilities.minImageCount + 1;
-		if (swap_chain_support.capabilities.maxImageCount > 0 && image_count > swap_chain_support.capabilities.maxImageCount) {
-			image_count = swap_chain_support.capabilities.maxImageCount;
+		uint32_t image_count = swap_chain_support.capabilities_.minImageCount + 1;
+		if (swap_chain_support.capabilities_.maxImageCount > 0 && image_count > swap_chain_support.capabilities_.maxImageCount) {
+			image_count = swap_chain_support.capabilities_.maxImageCount;
 		}
 
 		VkSwapchainCreateInfoKHR create_info{};
@@ -450,7 +451,7 @@ namespace Core {
 			create_info.pQueueFamilyIndices = nullptr;
 		}
 		// 画像に対する事前の変換処理を指定する。ここではそのままにする
-		create_info.preTransform = swap_chain_support.capabilities.currentTransform;
+		create_info.preTransform = swap_chain_support.capabilities_.currentTransform;
 		// ウィンドウシステム内のほかのウィンドウとのブレンドにアルファチャンネルを使うかどうか
 		// 今回は無視する設定
 		create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -494,5 +495,48 @@ namespace Core {
 				throw std::runtime_error("イメージビューの生成に失敗しました！");
 			}
 		}
+	}
+
+	VkShaderModule VulkanApplication::CreateShaderModule(const std::vector<char>& code) {
+		VkShaderModuleCreateInfo create_info{};
+		create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		create_info.codeSize = code.size();
+		// uint32_tのポインタにキャストしてあげる必要がある。
+		// vectorはデフォルトでアロケータを持つのでアラインメント要件を気にしなくてもよい
+		create_info.pCode = reinterpret_cast<const uint32_t*>(code.data());
+		VkShaderModule shader_module;
+		if (vkCreateShaderModule(device_, &create_info, nullptr, &shader_module) != VK_SUCCESS) {
+			throw std::runtime_error("シェーダーモジュールの生成に失敗しました！");
+		}
+		return shader_module;
+	}
+	
+	void VulkanApplication::CreateGraphicsPipeline() {
+		// 頂点シェーダーとフラグメントシェーダーを設定する。
+		auto vert_shader_code = ReadFile("shaders/vert.spv");
+		auto frag_shader_code = ReadFile("shaders/frag.spv");
+
+		VkShaderModule vert_shader_module = CreateShaderModule(vert_shader_code);
+		VkShaderModule frag_shader_module = CreateShaderModule(frag_shader_code);
+
+		VkPipelineShaderStageCreateInfo vert_shader_stage_info{};
+		vert_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vert_shader_stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vert_shader_stage_info.module = vert_shader_module;
+		// シェーダーのエントリポイント名を設定する
+		vert_shader_stage_info.pName = "main";
+		
+		VkPipelineShaderStageCreateInfo frag_shader_stage_info{};
+		frag_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		frag_shader_stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		frag_shader_stage_info.module = frag_shader_module;
+		// シェーダーのエントリポイント名を設定する
+		frag_shader_stage_info.pName = "main";
+		// pSpecializationInfo をここでさらに指定すると、パイプライン作成時にその動作を設定することができる
+
+		VkPipelineShaderStageCreateInfo shader_stages[] = { vert_shader_stage_info, frag_shader_stage_info };
+
+		vkDestroyShaderModule(device_, frag_shader_module, nullptr);
+		vkDestroyShaderModule(device_, vert_shader_module, nullptr);
 	}
 }
