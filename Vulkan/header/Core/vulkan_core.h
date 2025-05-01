@@ -318,5 +318,6 @@ namespace Core
 		std::vector<VkImageView> swap_chain_image_views_;
 		VkFormat swap_chain_image_format_;
 		VkExtent2D swap_chain_extent_;
+		VkPipelineLayout pipeline_layout_;
 	};
 }
