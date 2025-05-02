@@ -304,6 +304,13 @@ namespace Core
 			const std::vector<char>& code // シェーダーコード
 		);
 
+		/**
+		* @fn
+		* @brief
+		* レンダーパスを生成する
+		*/
+		void CreateRenderPass();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -318,6 +325,8 @@ namespace Core
 		std::vector<VkImageView> swap_chain_image_views_;
 		VkFormat swap_chain_image_format_;
 		VkExtent2D swap_chain_extent_;
+		VkRenderPass render_pass_;
 		VkPipelineLayout pipeline_layout_;
+		VkPipeline graphics_pipeline_;
 	};
 }
