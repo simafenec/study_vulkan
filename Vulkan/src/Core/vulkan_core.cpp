@@ -36,6 +36,7 @@ namespace Core {
 		CreateGraphicsPipeline();
 		CreateFramebuffers();
 		CreateCommandPool();
+		CreateCommandBuffer();
 	}
 	void VulkanApplication::MainLoop() {
 		// エラーが出るまではウィンドウに対するイベントを観察し続ける
@@ -739,6 +740,72 @@ namespace Core {
 
 		if (vkCreateCommandPool(device_, &pool_info, nullptr, &command_pool_) != VK_SUCCESS) {
 			throw std::runtime_error("コマンドプールの生成に失敗しました！");
+		}
+	}
+	void VulkanApplication::CreateCommandBuffer() {
+		VkCommandBufferAllocateInfo allocate_info{};
+		allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocate_info.commandPool = command_pool_;
+		allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocate_info.commandBufferCount = 1;
+
+		if (vkAllocateCommandBuffers(device_, &allocate_info, &command_buffer_) != VK_SUCCESS) {
+			throw std::runtime_error("コマンドバッファの割り当てに失敗しました！");
+		}
+	}
+
+	void VulkanApplication::RecordCommandBuffer(
+		VkCommandBuffer command_buffer,
+		uint32_t image_index
+	) {
+		// コマンドの記録を開始する
+		VkCommandBufferBeginInfo begin_info{};
+		begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		begin_info.flags = 0;
+		begin_info.pInheritanceInfo = nullptr;
+
+		if (vkBeginCommandBuffer(command_buffer, &begin_info) != VK_SUCCESS) {
+			throw std::runtime_error("コマンドの記録開始に失敗しました！");
+		}
+
+		// レンダーパスを開始する。
+		VkRenderPassBeginInfo render_pass_info{};
+		render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		render_pass_info.renderPass = render_pass_;
+		render_pass_info.framebuffer = swap_chain_frame_buffers_[image_index];
+		render_pass_info.renderArea.offset = { 0, 0 };
+		render_pass_info.renderArea.extent = swap_chain_extent_;
+		VkClearValue clear_color = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
+		render_pass_info.clearValueCount = 1;
+		render_pass_info.pClearValues = &clear_color;
+		vkCmdBeginRenderPass(command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+		// 描画に使うグラフィックスパイプラインを指定する。
+		vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline_);
+		// ビューポートとシザー矩形を設定する
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(swap_chain_extent_.width);
+		viewport.height = static_cast<float>(swap_chain_extent_.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+		vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+
+		VkRect2D scissor{};
+		scissor.offset = { 0, 0 };
+		scissor.extent = swap_chain_extent_;
+		vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+		// 描画コマンドを発行する。
+		vkCmdDraw(command_buffer, 3, 1, 0, 0);
+
+		// レンダーパスを閉じる
+		vkCmdEndRenderPass(command_buffer);
+		// コマンドバッファの記録を終了する。
+		// コマンドにエラーがあった場合はここで対応する。
+		if (vkEndCommandBuffer(command_buffer) != VK_SUCCESS) {
+			throw std::runtime_error("コマンドバッファへのコマンドの書き込みに失敗しました！");
 		}
 	}
 }

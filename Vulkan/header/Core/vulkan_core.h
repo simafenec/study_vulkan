@@ -325,6 +325,23 @@ namespace Core
 		*/
 		void CreateCommandPool();
 
+		/**
+		* @fn
+		* @brief
+		* コマンドバッファを生成する。
+		*/
+		void CreateCommandBuffer();
+
+		/**
+		* @fn
+		* @brief
+		* コマンドバッファに描画のための一連の操作を記録する。
+		*/
+		void RecordCommandBuffer(
+			VkCommandBuffer command_buffer,		// コマンドの記録に使用するコマンドバッファ
+			uint32_t image_index				// 書き込み先のスワップチェーンイメージのインデックス
+		);
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -344,5 +361,6 @@ namespace Core
 		VkPipelineLayout pipeline_layout_;
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
+		VkCommandBuffer command_buffer_;
 	};
 }
