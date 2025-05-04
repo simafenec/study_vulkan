@@ -34,6 +34,8 @@ namespace Core {
 		CreateImageViews();
 		CreateRenderPass();
 		CreateGraphicsPipeline();
+		CreateFramebuffers();
+		CreateCommandPool();
 	}
 	void VulkanApplication::MainLoop() {
 		// エラーが出るまではウィンドウに対するイベントを観察し続ける
@@ -45,6 +47,10 @@ namespace Core {
 	void VulkanApplication::CleanUp() {
 		if (kEnableValidationLayers) {
 			DestroyDebugUtilsMessenger(nullptr);
+		}
+		vkDestroyCommandPool(device_, command_pool_, nullptr);
+		for (auto framebuffer : swap_chain_frame_buffers_) {
+			vkDestroyFramebuffer(device_, framebuffer, nullptr);
 		}
 		for (auto image_view : swap_chain_image_views_) {
 			vkDestroyImageView(device_, image_view, nullptr);
@@ -700,5 +706,39 @@ namespace Core {
 
 		vkDestroyShaderModule(device_, frag_shader_module, nullptr);
 		vkDestroyShaderModule(device_, vert_shader_module, nullptr);
+	}
+
+	void VulkanApplication::CreateFramebuffers() {
+		// ImageViewの数とフレームバッファの数は同じ
+		swap_chain_frame_buffers_.resize(swap_chain_image_views_.size());
+		// 各ImageViewに対応するフレームバッファを作成する。
+		for (size_t i = 0; i < swap_chain_image_views_.size(); i++) {
+			VkImageView attachments[] = {swap_chain_image_views_[i]};
+			VkFramebufferCreateInfo frame_buffer_info{};
+			frame_buffer_info.renderPass = render_pass_;
+			frame_buffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			frame_buffer_info.attachmentCount = 1;
+			frame_buffer_info.pAttachments = attachments;
+			frame_buffer_info.width = swap_chain_extent_.width;
+			frame_buffer_info.height = swap_chain_extent_.height;
+			frame_buffer_info.layers = 1;
+
+			if (vkCreateFramebuffer(device_, &frame_buffer_info, nullptr, &swap_chain_frame_buffers_[i]) != VK_SUCCESS) {
+				throw std::runtime_error("フレームバッファの生成に失敗しました！");
+			}
+		}
+	}
+
+	void VulkanApplication::CreateCommandPool() {
+		QueueFamilyIndices queue_family_indices = FindQueueFamilies(physical_device_);
+
+		VkCommandPoolCreateInfo pool_info{};
+		pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+		pool_info.queueFamilyIndex = queue_family_indices.graphics_family_.value();
+
+		if (vkCreateCommandPool(device_, &pool_info, nullptr, &command_pool_) != VK_SUCCESS) {
+			throw std::runtime_error("コマンドプールの生成に失敗しました！");
+		}
 	}
 }

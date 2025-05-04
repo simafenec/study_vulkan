@@ -311,6 +311,20 @@ namespace Core
 		*/
 		void CreateRenderPass();
 
+		/**
+		* @fn
+		* @brief
+		* フレームバッファを生成する。
+		*/
+		void CreateFramebuffers();
+
+		/**
+		* @fn
+		* @brief
+		* コマンドプールを生成する。
+		*/
+		void CreateCommandPool();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -323,10 +337,12 @@ namespace Core
 		VkSwapchainKHR swap_chain_;
 		std::vector<VkImage> swap_chain_images_;
 		std::vector<VkImageView> swap_chain_image_views_;
+		std::vector<VkFramebuffer> swap_chain_frame_buffers_;
 		VkFormat swap_chain_image_format_;
 		VkExtent2D swap_chain_extent_;
 		VkRenderPass render_pass_;
 		VkPipelineLayout pipeline_layout_;
 		VkPipeline graphics_pipeline_;
+		VkCommandPool command_pool_;
 	};
 }
