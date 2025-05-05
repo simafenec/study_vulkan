@@ -37,12 +37,17 @@ namespace Core {
 		CreateFramebuffers();
 		CreateCommandPool();
 		CreateCommandBuffer();
+		CreateSyncObjects();
 	}
 	void VulkanApplication::MainLoop() {
 		// エラーが出るまではウィンドウに対するイベントを観察し続ける
 		while (!glfwWindowShouldClose(window_)) {
 			glfwPollEvents();
+			DrawFrame();
 		}
+		// メインループが終わったとたんに各種オブジェクトが破棄されると処理中のものが残っているときに困るので
+		// 論理デバイスがIdleになるまで待機する。
+		vkDeviceWaitIdle(device_);
 	}
 
 	void VulkanApplication::CleanUp() {
@@ -57,6 +62,9 @@ namespace Core {
 			vkDestroyImageView(device_, image_view, nullptr);
 		}
 		// インスタンスは最後に破棄すること
+		vkDestroySemaphore(device_, image_available_semaphore_, nullptr);
+		vkDestroySemaphore(device_, render_finished_semaphore_, nullptr);
+		vkDestroyFence(device_, in_flight_fence_, nullptr);
 		vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
 		vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
 		vkDestroyRenderPass(device_, render_pass_, nullptr);
@@ -73,6 +81,46 @@ namespace Core {
 		InitVulkan();
 		MainLoop();
 		CleanUp();
+	}
+
+	void VulkanApplication::DrawFrame() {
+		// 一つ前のフレームを待機
+		vkWaitForFences(device_, 1, &in_flight_fence_, VK_TRUE, UINT64_MAX);
+		// フェンスを明示的にリセット
+		vkResetFences(device_, 1, &in_flight_fence_);
+		uint32_t image_index;
+		vkAcquireNextImageKHR(device_, swap_chain_, UINT64_MAX, image_available_semaphore_, VK_NULL_HANDLE, &image_index);
+		// コマンドバッファに描画コマンドを記録
+		vkResetCommandBuffer(command_buffer_, 0);
+		RecordCommandBuffer(command_buffer_, image_index);
+		// コマンドの提出タイミングなどを設定
+		VkSubmitInfo submit_info{};
+		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+		VkSemaphore wait_semaphores[] = { image_available_semaphore_ };
+		VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+		submit_info.waitSemaphoreCount = 1;
+		submit_info.pWaitSemaphores = wait_semaphores;
+		submit_info.pWaitDstStageMask = wait_stages;
+		submit_info.commandBufferCount = 1;
+		submit_info.pCommandBuffers = &command_buffer_;
+		VkSemaphore signal_semaphores[] = { render_finished_semaphore_ };
+		submit_info.signalSemaphoreCount = 1;
+		submit_info.pSignalSemaphores = signal_semaphores;
+		if (vkQueueSubmit(graphics_queue_, 1, &submit_info, in_flight_fence_) != VK_SUCCESS) {
+			throw std::runtime_error("描画コマンドの発行に失敗しました！");
+		}
+		VkPresentInfoKHR present_info{};
+		present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		present_info.waitSemaphoreCount = 1;
+		present_info.pWaitSemaphores = signal_semaphores;
+		VkSwapchainKHR swap_chains[] = { swap_chain_ };
+		present_info.swapchainCount = 1;
+		present_info.pSwapchains = swap_chains;
+		present_info.pImageIndices = &image_index;
+		present_info.pResults = nullptr;
+
+		vkQueuePresentKHR(present_queue_, &present_info);
 	}
 
 	void VulkanApplication::CreateVkInstance() {
@@ -542,12 +590,24 @@ namespace Core {
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &color_attachment_reference;
 
+		// サブパス依存性設定
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		// 今はサブパスが一つしかないので0番目のインデックスを指定
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		
 		VkRenderPassCreateInfo render_pass_info{};
 		render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 		render_pass_info.attachmentCount = 1;
 		render_pass_info.pAttachments = &color_attachment;
 		render_pass_info.subpassCount = 1;
 		render_pass_info.pSubpasses = &subpass;
+		render_pass_info.dependencyCount = 1;
+		render_pass_info.pDependencies = &dependency;
 
 		if (vkCreateRenderPass(device_, &render_pass_info, nullptr, &render_pass_) != VK_SUCCESS) {
 			throw std::runtime_error("レンダーパスの生成に失敗しました");
@@ -806,6 +866,21 @@ namespace Core {
 		// コマンドにエラーがあった場合はここで対応する。
 		if (vkEndCommandBuffer(command_buffer) != VK_SUCCESS) {
 			throw std::runtime_error("コマンドバッファへのコマンドの書き込みに失敗しました！");
+		}
+	}
+
+	void VulkanApplication::CreateSyncObjects() {
+		VkSemaphoreCreateInfo semaphore_info{};
+		semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		VkFenceCreateInfo fence_info{};
+		fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		// 最初のフレームは即座にシグナルを送ってほしいのでシグナルがある状態で生成する
+		fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+		if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &image_available_semaphore_) != VK_SUCCESS ||
+			vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_semaphore_) != VK_SUCCESS ||
+			vkCreateFence(device_, &fence_info, nullptr, &in_flight_fence_) != VK_SUCCESS) {
+			throw std::runtime_error("同期オブジェクトの生成に失敗しました！");
 		}
 	}
 }

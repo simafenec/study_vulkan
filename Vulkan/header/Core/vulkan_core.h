@@ -98,6 +98,13 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* コマンドバッファに記録されたコマンドを実行し描画を行う。
+		*/
+		void DrawFrame();
+
+		/**
+		* @fn
+		* @brief
 		* 要求されている拡張機能が全てサポートされているかをチェックする
 		* @detail
 		* VkInstance生成時にVkInstanceCreateInfo内で設定している必要な拡張機能がサポートされていない場合、
@@ -342,6 +349,13 @@ namespace Core
 			uint32_t image_index				// 書き込み先のスワップチェーンイメージのインデックス
 		);
 
+		/**
+		* @fn
+		* @brief
+		* 実行同期を取るために使われるオブジェクト(セマフォ / フェンス)を生成する。
+		*/
+		void CreateSyncObjects();
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -362,5 +376,8 @@ namespace Core
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
 		VkCommandBuffer command_buffer_;
+		VkSemaphore image_available_semaphore_;
+		VkSemaphore render_finished_semaphore_;
+		VkFence in_flight_fence_;
 	};
 }
