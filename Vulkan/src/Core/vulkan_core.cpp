@@ -19,9 +19,11 @@ namespace Core {
 		// GLFWはOpenGLのcontextを作るために設計されているため、まずそれを制御する必要がある。
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		// ウィンドウのリサイズは特別な対応が必要になるためいったんできないようにする
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		// glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 		// 四つ目のパラメータは画面を開くモニターを指定でき、五つ目のパラメータはOpenGL以外では必要ない
 		window_ = glfwCreateWindow(kWidth, kHeight, "Vulkan", nullptr, nullptr);
+		glfwSetWindowUserPointer(window_, this);
+		glfwSetFramebufferSizeCallback(window_, FramebufferReizeCallback);
 	}
 
 	void VulkanApplication::InitVulkan() {
@@ -36,7 +38,7 @@ namespace Core {
 		CreateGraphicsPipeline();
 		CreateFramebuffers();
 		CreateCommandPool();
-		CreateCommandBuffer();
+		CreateCommandBuffers();
 		CreateSyncObjects();
 	}
 	void VulkanApplication::MainLoop() {
@@ -51,29 +53,37 @@ namespace Core {
 	}
 
 	void VulkanApplication::CleanUp() {
+		vkDestroyCommandPool(device_, command_pool_, nullptr);
+		// インスタンスは最後に破棄すること
+		for (int index = 0; index < kMaxFramesInFlight; index++) {
+			vkDestroySemaphore(device_, image_available_semaphores_[index], nullptr);
+			vkDestroySemaphore(device_, render_finished_semaphores_[index], nullptr);
+			vkDestroyFence(device_, in_flight_fences_[index], nullptr);
+		}
+		CleanUpSwapChainDependents();
+		vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
+		vkDestroyDevice(device_, nullptr);
+
 		if (kEnableValidationLayers) {
 			DestroyDebugUtilsMessenger(nullptr);
 		}
-		vkDestroyCommandPool(device_, command_pool_, nullptr);
+
+		vkDestroySurfaceKHR(instance_, surface_, nullptr);
+		vkDestroyInstance(instance_, nullptr);
+		glfwDestroyWindow(window_);
+		glfwTerminate();
+	}
+
+	void VulkanApplication::CleanUpSwapChainDependents() {
 		for (auto framebuffer : swap_chain_frame_buffers_) {
 			vkDestroyFramebuffer(device_, framebuffer, nullptr);
 		}
 		for (auto image_view : swap_chain_image_views_) {
 			vkDestroyImageView(device_, image_view, nullptr);
 		}
-		// インスタンスは最後に破棄すること
-		vkDestroySemaphore(device_, image_available_semaphore_, nullptr);
-		vkDestroySemaphore(device_, render_finished_semaphore_, nullptr);
-		vkDestroyFence(device_, in_flight_fence_, nullptr);
 		vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
 		vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
 		vkDestroyRenderPass(device_, render_pass_, nullptr);
-		vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
-		vkDestroyDevice(device_, nullptr);
-		vkDestroySurfaceKHR(instance_, surface_, nullptr);
-		vkDestroyInstance(instance_, nullptr);
-		glfwDestroyWindow(window_);
-		glfwTerminate();
 	}
 
 	void VulkanApplication::Run() {
@@ -85,29 +95,37 @@ namespace Core {
 
 	void VulkanApplication::DrawFrame() {
 		// 一つ前のフレームを待機
-		vkWaitForFences(device_, 1, &in_flight_fence_, VK_TRUE, UINT64_MAX);
-		// フェンスを明示的にリセット
-		vkResetFences(device_, 1, &in_flight_fence_);
+		vkWaitForFences(device_, 1, &in_flight_fences_[current_frame_], VK_TRUE, UINT64_MAX);
 		uint32_t image_index;
-		vkAcquireNextImageKHR(device_, swap_chain_, UINT64_MAX, image_available_semaphore_, VK_NULL_HANDLE, &image_index);
+		VkResult result = vkAcquireNextImageKHR(device_, swap_chain_, UINT64_MAX, image_available_semaphores_[current_frame_], VK_NULL_HANDLE, &image_index);
+		if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+			RecreateSwapChain();
+			return;
+		}
+		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+			throw std::runtime_error("スワップチェーンイメージの取得に失敗しました！");
+		}
+		// フェンスを明示的にリセット
+		vkResetFences(device_, 1, &in_flight_fences_[current_frame_]);
+		
 		// コマンドバッファに描画コマンドを記録
-		vkResetCommandBuffer(command_buffer_, 0);
-		RecordCommandBuffer(command_buffer_, image_index);
+		vkResetCommandBuffer(command_buffers_[current_frame_], 0);
+		RecordCommandBuffer(command_buffers_[current_frame_], image_index);
 		// コマンドの提出タイミングなどを設定
 		VkSubmitInfo submit_info{};
 		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-		VkSemaphore wait_semaphores[] = { image_available_semaphore_ };
+		VkSemaphore wait_semaphores[] = { image_available_semaphores_[current_frame_]};
 		VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
 		submit_info.waitSemaphoreCount = 1;
 		submit_info.pWaitSemaphores = wait_semaphores;
 		submit_info.pWaitDstStageMask = wait_stages;
 		submit_info.commandBufferCount = 1;
-		submit_info.pCommandBuffers = &command_buffer_;
-		VkSemaphore signal_semaphores[] = { render_finished_semaphore_ };
+		submit_info.pCommandBuffers = &command_buffers_[current_frame_];
+		VkSemaphore signal_semaphores[] = { render_finished_semaphores_[current_frame_]};
 		submit_info.signalSemaphoreCount = 1;
 		submit_info.pSignalSemaphores = signal_semaphores;
-		if (vkQueueSubmit(graphics_queue_, 1, &submit_info, in_flight_fence_) != VK_SUCCESS) {
+		if (vkQueueSubmit(graphics_queue_, 1, &submit_info, in_flight_fences_[current_frame_] ) != VK_SUCCESS) {
 			throw std::runtime_error("描画コマンドの発行に失敗しました！");
 		}
 		VkPresentInfoKHR present_info{};
@@ -120,7 +138,17 @@ namespace Core {
 		present_info.pImageIndices = &image_index;
 		present_info.pResults = nullptr;
 
-		vkQueuePresentKHR(present_queue_, &present_info);
+		result = vkQueuePresentKHR(present_queue_, &present_info);
+		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebuffer_resized_) {
+			framebuffer_resized_ = false;
+			RecreateSwapChain();
+		}
+		else if (result != VK_SUCCESS) {
+			throw std::runtime_error("スワップチェーンイメージの取得に失敗しました！");
+		}
+
+		// モジュロにすることで常に利用可能な範囲のインデックスを反復するようになる
+		current_frame_ = (current_frame_ + 1) % kMaxFramesInFlight;
 	}
 
 	void VulkanApplication::CreateVkInstance() {
@@ -518,7 +546,7 @@ namespace Core {
 		// 他のウィンドウが前にあるなどして隠されているピクセルの色は考慮されない
 		create_info.clipped = VK_TRUE;
 		// 古いスワップチェインへの参照 ウィンドウのサイズが変更になった際などに設定する必要がある。
-		create_info.oldSwapchain = VK_NULL_HANDLE;
+		create_info.oldSwapchain = old_swap_chain_;
 
 		if (vkCreateSwapchainKHR(device_, &create_info, nullptr, &swap_chain_) != VK_SUCCESS) {
 			throw std::runtime_error("スワップチェインの生成に失敗しました!");
@@ -802,14 +830,15 @@ namespace Core {
 			throw std::runtime_error("コマンドプールの生成に失敗しました！");
 		}
 	}
-	void VulkanApplication::CreateCommandBuffer() {
+	void VulkanApplication::CreateCommandBuffers() {
+		command_buffers_.resize(kMaxFramesInFlight);
 		VkCommandBufferAllocateInfo allocate_info{};
 		allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		allocate_info.commandPool = command_pool_;
 		allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocate_info.commandBufferCount = 1;
+		allocate_info.commandBufferCount = static_cast<uint32_t>(command_buffers_.size());
 
-		if (vkAllocateCommandBuffers(device_, &allocate_info, &command_buffer_) != VK_SUCCESS) {
+		if (vkAllocateCommandBuffers(device_, &allocate_info, command_buffers_.data()) != VK_SUCCESS) {
 			throw std::runtime_error("コマンドバッファの割り当てに失敗しました！");
 		}
 	}
@@ -870,17 +899,54 @@ namespace Core {
 	}
 
 	void VulkanApplication::CreateSyncObjects() {
+		image_available_semaphores_.resize(kMaxFramesInFlight);
+		render_finished_semaphores_.resize(kMaxFramesInFlight);
+		in_flight_fences_.resize(kMaxFramesInFlight);
+
 		VkSemaphoreCreateInfo semaphore_info{};
 		semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
 		VkFenceCreateInfo fence_info{};
 		fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 		// 最初のフレームは即座にシグナルを送ってほしいのでシグナルがある状態で生成する
 		fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-		if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &image_available_semaphore_) != VK_SUCCESS ||
-			vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_semaphore_) != VK_SUCCESS ||
-			vkCreateFence(device_, &fence_info, nullptr, &in_flight_fence_) != VK_SUCCESS) {
-			throw std::runtime_error("同期オブジェクトの生成に失敗しました！");
+		
+		// 個数分作成する。
+		for (int index = 0; index < kMaxFramesInFlight; index++) {
+			if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &image_available_semaphores_[index]) != VK_SUCCESS ||
+				vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_semaphores_[index]) != VK_SUCCESS ||
+				vkCreateFence(device_, &fence_info, nullptr, &in_flight_fences_[index]) != VK_SUCCESS) {
+				throw std::runtime_error("同期オブジェクトの生成に失敗しました！");
+			}
 		}
+	}
+
+	void VulkanApplication::RecreateSwapChain() {
+		// ウィンドウの最小化対応
+		// ウィンドウが最小化されたときは再び展開されるまで待機する
+		int width = 0, height = 0;
+		glfwGetFramebufferSize(window_, &width, &height);
+		while (width == 0 || height == 0) {
+			glfwGetFramebufferSize(window_, &width, &height);
+			glfwWaitEvents();
+		}
+
+		// 古いスワップチェーンを一時的に保持しておく
+		old_swap_chain_ = swap_chain_;
+		// 新しいスワップチェーンを作る。
+		CreateSwapChain();
+		// 新しいスワップチェーンを作ったので、古いスワップチェーンは破棄する
+		if (old_swap_chain_ != VK_NULL_HANDLE) {
+			vkDestroySwapchainKHR(device_, old_swap_chain_, nullptr);
+		}
+		vkDeviceWaitIdle(device_);
+		// 古いスワップチェーンに依存しているオブジェクトを破棄する
+		CleanUpSwapChainDependents();
+		// 依存オブジェクトを再生成する
+		CreateImageViews();
+		CreateRenderPass();
+		CreateGraphicsPipeline();
+		CreateFramebuffers();
+		CreateCommandBuffers();
 	}
 }

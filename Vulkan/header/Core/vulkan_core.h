@@ -56,6 +56,8 @@ namespace Core
 		const std::vector<const char*> kDeviceExtensions = {
 			VK_KHR_SWAPCHAIN_EXTENSION_NAME
 		};
+		// 一度に処理するフレームの数
+		const int kMaxFramesInFlight = 2;
 #ifdef NDEBUG
 		const bool kEnableValidationLayers = false;
 #else
@@ -268,6 +270,20 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* スワップチェーンを再生成する。
+		*/
+		void RecreateSwapChain();
+
+		/**
+		* @fn
+		* @brief
+		* 現在のスワップチェーンを破棄する。
+		*/
+		void CleanUpSwapChainDependents();
+
+		/**
+		* @fn
+		* @brief
 		* スワップチェイン内の画像を扱うために使われるイメージビューを生成する。
 		*/
 		void CreateImageViews();
@@ -337,7 +353,7 @@ namespace Core
 		* @brief
 		* コマンドバッファを生成する。
 		*/
-		void CreateCommandBuffer();
+		void CreateCommandBuffers();
 
 		/**
 		* @fn
@@ -356,6 +372,18 @@ namespace Core
 		*/
 		void CreateSyncObjects();
 
+		/**
+		* @fn
+		* @brief
+		* ウィンドウサイズが書き換わったときのコールバック
+		*/
+		static void FramebufferReizeCallback(GLFWwindow* window, int width, int height) {
+			// framebuffer_resized_ メンバは静的変数ではないので直接値をいじれない
+			// あらかじめ設定したこのクラスのインスタンス経由で変更を加える
+			auto app = reinterpret_cast<VulkanApplication*>(glfwGetWindowUserPointer(window));
+			app->framebuffer_resized_ = true;
+		}
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -366,6 +394,7 @@ namespace Core
 		VkQueue present_queue_;
 		VkSurfaceKHR surface_;
 		VkSwapchainKHR swap_chain_;
+		VkSwapchainKHR old_swap_chain_;
 		std::vector<VkImage> swap_chain_images_;
 		std::vector<VkImageView> swap_chain_image_views_;
 		std::vector<VkFramebuffer> swap_chain_frame_buffers_;
@@ -375,9 +404,11 @@ namespace Core
 		VkPipelineLayout pipeline_layout_;
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
-		VkCommandBuffer command_buffer_;
-		VkSemaphore image_available_semaphore_;
-		VkSemaphore render_finished_semaphore_;
-		VkFence in_flight_fence_;
+		std::vector<VkCommandBuffer> command_buffers_;
+		std::vector<VkSemaphore> image_available_semaphores_;
+		std::vector<VkSemaphore> render_finished_semaphores_;
+		std::vector<VkFence> in_flight_fences_;
+		uint32_t current_frame_ = 0;
+		bool framebuffer_resized_ = false;
 	};
 }
