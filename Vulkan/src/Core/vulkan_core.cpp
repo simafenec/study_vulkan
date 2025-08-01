@@ -14,6 +14,15 @@
 #include<algorithm>
 
 namespace Core {
+	/**
+	* 三角形描画のための頂点データ
+	* 仮置き
+	*/
+	std::vector<Vertex> vertices = {
+		{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+		{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+		{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+	};
 	void VulkanApplication::InitWindow() {
 		glfwInit();
 		// GLFWはOpenGLのcontextを作るために設計されているため、まずそれを制御する必要がある。
@@ -38,6 +47,7 @@ namespace Core {
 		CreateGraphicsPipeline();
 		CreateFramebuffers();
 		CreateCommandPool();
+		CreateVertexBuffer();
 		CreateCommandBuffers();
 		CreateSyncObjects();
 	}
@@ -62,6 +72,8 @@ namespace Core {
 		}
 		CleanUpSwapChainDependents();
 		vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
+		vkDestroyBuffer(device_, vertex_buffer_, nullptr);
+		vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
 		vkDestroyDevice(device_, nullptr);
 
 		if (kEnableValidationLayers) {
@@ -668,12 +680,15 @@ namespace Core {
 		VkPipelineShaderStageCreateInfo shader_stages[] = { vert_shader_stage_info, frag_shader_stage_info };
 
 		// 頂点入力の形式に関する情報を与える
+		auto binding_description = Vertex::GetBindingDescription();
+		auto attribute_description = Vertex::GetAttributeDescriptions();
+
 		VkPipelineVertexInputStateCreateInfo vertex_input_info{};
 		vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertex_input_info.vertexBindingDescriptionCount = 0;
-		vertex_input_info.pVertexBindingDescriptions = nullptr;
-		vertex_input_info.vertexAttributeDescriptionCount = 0;
-		vertex_input_info.pVertexAttributeDescriptions = nullptr;
+		vertex_input_info.vertexBindingDescriptionCount = 1;
+		vertex_input_info.pVertexBindingDescriptions = &binding_description;
+		vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribute_description.size());
+		vertex_input_info.pVertexAttributeDescriptions = attribute_description.data();
 
 		// Input Assembly を設定する
 		VkPipelineInputAssemblyStateCreateInfo input_assembly{};
@@ -871,6 +886,10 @@ namespace Core {
 
 		// 描画に使うグラフィックスパイプラインを指定する。
 		vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline_);
+
+		VkBuffer vertexBuffers[] = { vertex_buffer_ };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(command_buffer, 0, 1, vertexBuffers, offsets);
 		// ビューポートとシザー矩形を設定する
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -887,7 +906,7 @@ namespace Core {
 		vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
 		// 描画コマンドを発行する。
-		vkCmdDraw(command_buffer, 3, 1, 0, 0);
+		vkCmdDraw(command_buffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
 		// レンダーパスを閉じる
 		vkCmdEndRenderPass(command_buffer);
@@ -919,6 +938,47 @@ namespace Core {
 				throw std::runtime_error("同期オブジェクトの生成に失敗しました！");
 			}
 		}
+	}
+
+	void VulkanApplication::CreateVertexBuffer() {
+		VkBufferCreateInfo bufferCreateInfo{};
+		bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bufferCreateInfo.size = sizeof(vertices[0]) * vertices.size();
+		bufferCreateInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+		bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		if (vkCreateBuffer(device_, &bufferCreateInfo, nullptr, &vertex_buffer_) != VK_SUCCESS)
+		{
+			throw std::runtime_error("頂点バッファの作成に失敗しました");
+		}
+		VkMemoryRequirements memRequirements;
+		vkGetBufferMemoryRequirements(device_, vertex_buffer_, &memRequirements);
+
+		VkMemoryAllocateInfo allocateInfo{};
+		allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocateInfo.allocationSize = memRequirements.size;
+		allocateInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		if (vkAllocateMemory(device_, &allocateInfo, nullptr, &vertex_buffer_memory_) != VK_SUCCESS) {
+			throw std::runtime_error("VertexBuffer用のメモリ確保に失敗しました");
+		}
+		// 四番目の引数はメモリ領域内のオフセット。複数の用途で使う場合はalignmentで割り切れる値でオフセットを設定する
+		vkBindBufferMemory(device_, vertex_buffer_, vertex_buffer_memory_, 0);
+
+		// ここでデータをバインドするのは適切ではない?
+		void* data;
+		vkMapMemory(device_, vertex_buffer_memory_, 0, bufferCreateInfo.size, 0, &data);
+		memcpy(data, vertices.data(), (size_t)bufferCreateInfo.size);
+		vkUnmapMemory(device_, vertex_buffer_memory_);
+	}
+
+	uint32_t VulkanApplication::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+		VkPhysicalDeviceMemoryProperties memProperties;
+		vkGetPhysicalDeviceMemoryProperties(physical_device_, &memProperties);
+		for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+			if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties)) {
+				return i;
+			}
+		}
+		throw std::runtime_error("適切なメモリタイプを特定できませんでした");
 	}
 
 	void VulkanApplication::RecreateSwapChain() {

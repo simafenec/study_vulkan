@@ -9,12 +9,14 @@
 #include<vector>
 #include<iostream>
 #include<fstream>
+#include<array>
 
 // ウィンドウ生成に関する各種機能を宣言するヘッダー
 #define GLFW_INCLUDE_VULKAN 1
 // Vulkanの各種関数や構造体、列挙型を提供してくれるヘッダー
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include<optional>
 
 namespace Core
@@ -43,6 +45,51 @@ namespace Core
 		VkSurfaceCapabilitiesKHR capabilities_;
 		std::vector<VkSurfaceFormatKHR> formats_;
 		std::vector<VkPresentModeKHR> present_modes_;
+	};
+
+	/**
+	* @brief
+	* Vulkan側で頂点データを扱うために使用する構造体。
+	*/
+	struct Vertex {
+		glm::vec2 pos;
+		glm::vec3 color;
+		/**
+		* @fn
+		* @brief
+		* 頂点データのバインディング情報を取得する。
+		*/
+		static VkVertexInputBindingDescription GetBindingDescription() {
+			VkVertexInputBindingDescription binding_description{};
+			binding_description.binding = 0;
+			binding_description.stride = sizeof(Vertex);
+			binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+			return binding_description;
+		}
+		/**
+		* @fn
+		* @brief
+		* 頂点データの属性情報を取得する。
+		*/
+		static std::array<VkVertexInputAttributeDescription, 2> GetAttributeDescriptions() {
+			std::array<VkVertexInputAttributeDescription, 2> attribute_descriptions{};
+			// 頂点データをバインディングしているバッファ 今回は0番
+			attribute_descriptions[0].binding = 0;
+			// 座標データをどのlocationから頂点シェーダーに与えるか？今回は0番
+			// Shader の (location = 0)のデータに与えられる
+			attribute_descriptions[0].location = 0;
+			// 頂点はvec2なので R32G32で指定
+			attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+			attribute_descriptions[0].offset = offsetof(Vertex, pos);
+
+			attribute_descriptions[1].binding = 0;
+			// 色データをどのlocationから頂点シェーダーに与えるか？今回は1番
+			// Shader の (location = 1)のデータに与えられる
+			attribute_descriptions[1].location = 1;
+			attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+			attribute_descriptions[1].offset = offsetof(Vertex, color);
+			return attribute_descriptions;
+		}
 	};
 
 	class VulkanApplication {
@@ -375,6 +422,19 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* 頂点バッファを生成する
+		*/
+		void CreateVertexBuffer();
+
+		/**
+		* @fn
+		* @brief
+		* バッファに適したGPUのメモリタイプを取得する。
+		*/
+		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+		/**
+		* @fn
+		* @brief
 		* ウィンドウサイズが書き換わったときのコールバック
 		*/
 		static void FramebufferReizeCallback(GLFWwindow* window, int width, int height) {
@@ -404,6 +464,8 @@ namespace Core
 		VkPipelineLayout pipeline_layout_;
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
+		VkBuffer vertex_buffer_;
+		VkDeviceMemory vertex_buffer_memory_;
 		std::vector<VkCommandBuffer> command_buffers_;
 		std::vector<VkSemaphore> image_available_semaphores_;
 		std::vector<VkSemaphore> render_finished_semaphores_;
