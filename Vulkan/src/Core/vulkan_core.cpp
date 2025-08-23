@@ -15,13 +15,22 @@
 
 namespace Core {
 	/**
-	* 三角形描画のための頂点データ
+	* 四角形描画のための頂点データ
 	* 仮置き
 	*/
 	std::vector<Vertex> vertices = {
-		{{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-		{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-		{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},	// 左上 赤色
+		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},	// 右上 緑色
+		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},		// 右下 青色
+		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}		// 左下 白色
+	};
+	/**
+	* 四角形描画のためのインデックスデータ
+	* 
+	*/
+	std::vector<uint16_t> indices = {
+		0, 1, 2,		// 右上の三角形
+		2, 3, 0			// 左下の三角形
 	};
 	void VulkanApplication::InitWindow() {
 		glfwInit();
@@ -48,6 +57,7 @@ namespace Core {
 		CreateFramebuffers();
 		CreateCommandPool();
 		CreateVertexBuffer();
+		CreateIndexBuffer();
 		CreateCommandBuffers();
 		CreateSyncObjects();
 	}
@@ -75,6 +85,8 @@ namespace Core {
 		vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
 		vkDestroyBuffer(device_, vertex_buffer_, nullptr);
 		vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
+		vkDestroyBuffer(device_, index_buffer_, nullptr);
+		vkFreeMemory(device_, index_buffer_memory_, nullptr);
 		vkDestroyDevice(device_, nullptr);
 
 		if (kEnableValidationLayers) {
@@ -897,6 +909,7 @@ namespace Core {
 		VkBuffer vertexBuffers[] = { vertex_buffer_ };
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(command_buffer, 0, 1, vertexBuffers, offsets);
+		vkCmdBindIndexBuffer(command_buffer, index_buffer_, 0, VK_INDEX_TYPE_UINT16);	// 元のvectorがuint16_tなのでそれに合わせる
 		// ビューポートとシザー矩形を設定する
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -913,7 +926,7 @@ namespace Core {
 		vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
 		// 描画コマンドを発行する。
-		vkCmdDraw(command_buffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		// レンダーパスを閉じる
 		vkCmdEndRenderPass(command_buffer);
@@ -1038,6 +1051,41 @@ namespace Core {
 
 		// vertexbufferにはvkMapMemory出来ないのでStagingBufferを経由してコピーする
 		CopyBuffer(stagingBuffer, vertex_buffer_, bufferSize);
+		// Staging Bufferを破棄
+		vkDestroyBuffer(device_, stagingBuffer, nullptr);
+		vkFreeMemory(device_, stagingBufferMemory, nullptr);
+	}
+
+	void VulkanApplication::CreateIndexBuffer()
+	{
+		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+		// Staging Bufferを用意
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		CreateBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,												// 転送元として使うことを指定
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,		// CPUからアクセス可能かつGPUとの同期が取られるバッファ
+			stagingBuffer,
+			stagingBufferMemory);
+		//Staging Bufferにデータをコピー
+		void* data;
+		vkMapMemory(device_, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, indices.data(), (size_t)bufferSize);
+		vkUnmapMemory(device_, stagingBufferMemory);
+
+
+		CreateBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,									 // GPUからのみアクセス可能なバッファとして生成する
+			index_buffer_,
+			index_buffer_memory_
+		);
+
+		// indexbufferにはvkMapMemory出来ないのでStagingBufferを経由してコピーする
+		CopyBuffer(stagingBuffer, index_buffer_, bufferSize);
 		// Staging Bufferを破棄
 		vkDestroyBuffer(device_, stagingBuffer, nullptr);
 		vkFreeMemory(device_, stagingBufferMemory, nullptr);

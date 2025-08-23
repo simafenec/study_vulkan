@@ -450,6 +450,13 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* インデックスバッファを生成する
+		*/
+		void CreateIndexBuffer();
+
+		/**
+		* @fn
+		* @brief
 		* バッファに適したGPUのメモリタイプを取得する。
 		*/
 		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
@@ -488,6 +495,8 @@ namespace Core
 		VkCommandPool transfer_command_pool_;
 		VkBuffer vertex_buffer_;
 		VkDeviceMemory vertex_buffer_memory_;
+		VkBuffer index_buffer_;
+		VkDeviceMemory index_buffer_memory_;
 		std::vector<VkCommandBuffer> command_buffers_;
 		std::vector<VkSemaphore> image_available_semaphores_;
 		std::vector<VkSemaphore> render_finished_semaphores_;
