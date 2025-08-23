@@ -422,6 +422,27 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* バッファを生成するためのヘルパー関数
+		* @param size バッファのサイズ
+		* @param usage バッファの使用用途
+		* @param properties バッファのメモリプロパティ
+		* @param buffer 生成されたバッファのハンドル格納先
+		* @param buffer_memory 生成されたバッファのメモリハンドル格納先
+		*/
+		void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& buffer_memory);
+		
+		/**
+		* @fn
+		* @brief
+		* バッファをコピーするためのヘルパー関数
+		* @param srcBuffer コピー元のバッファ
+		* @param dstBuffer コピー先のバッファ
+		* @param size バッファの大きさ
+		*/
+		void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+		/**
+		* @fn
+		* @brief
 		* 頂点バッファを生成する
 		*/
 		void CreateVertexBuffer();
@@ -464,6 +485,7 @@ namespace Core
 		VkPipelineLayout pipeline_layout_;
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
+		VkCommandPool transfer_command_pool_;
 		VkBuffer vertex_buffer_;
 		VkDeviceMemory vertex_buffer_memory_;
 		std::vector<VkCommandBuffer> command_buffers_;

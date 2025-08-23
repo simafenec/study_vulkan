@@ -64,6 +64,7 @@ namespace Core {
 
 	void VulkanApplication::CleanUp() {
 		vkDestroyCommandPool(device_, command_pool_, nullptr);
+		vkDestroyCommandPool(device_, transfer_command_pool_, nullptr);
 		// インスタンスは最後に破棄すること
 		for (int index = 0; index < kMaxFramesInFlight; index++) {
 			vkDestroySemaphore(device_, image_available_semaphores_[index], nullptr);
@@ -836,6 +837,7 @@ namespace Core {
 	void VulkanApplication::CreateCommandPool() {
 		QueueFamilyIndices queue_family_indices = FindQueueFamilies(physical_device_);
 
+		// 描画用のコマンドプールを作成
 		VkCommandPoolCreateInfo pool_info{};
 		pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 		pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -843,6 +845,11 @@ namespace Core {
 
 		if (vkCreateCommandPool(device_, &pool_info, nullptr, &command_pool_) != VK_SUCCESS) {
 			throw std::runtime_error("コマンドプールの生成に失敗しました！");
+		}
+		// 転送などの短命な要素を扱うためのコマンドプールを作成
+		pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+		if (vkCreateCommandPool(device_, &pool_info, nullptr, &transfer_command_pool_) != VK_SUCCESS) {
+			throw std::runtime_error("転送コマンドプールの生成に失敗しました！");
 		}
 	}
 	void VulkanApplication::CreateCommandBuffers() {
@@ -939,35 +946,101 @@ namespace Core {
 			}
 		}
 	}
-
-	void VulkanApplication::CreateVertexBuffer() {
+	void VulkanApplication::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& buffer_memory)
+	{
 		VkBufferCreateInfo bufferCreateInfo{};
 		bufferCreateInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-		bufferCreateInfo.size = sizeof(vertices[0]) * vertices.size();
-		bufferCreateInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+		bufferCreateInfo.size = size;
+		bufferCreateInfo.usage = usage;
 		bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		if (vkCreateBuffer(device_, &bufferCreateInfo, nullptr, &vertex_buffer_) != VK_SUCCESS)
+		if (vkCreateBuffer(device_, &bufferCreateInfo, nullptr, &buffer) != VK_SUCCESS)
 		{
 			throw std::runtime_error("頂点バッファの作成に失敗しました");
 		}
 		VkMemoryRequirements memRequirements;
-		vkGetBufferMemoryRequirements(device_, vertex_buffer_, &memRequirements);
+		vkGetBufferMemoryRequirements(device_, buffer, &memRequirements);
 
 		VkMemoryAllocateInfo allocateInfo{};
 		allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 		allocateInfo.allocationSize = memRequirements.size;
-		allocateInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-		if (vkAllocateMemory(device_, &allocateInfo, nullptr, &vertex_buffer_memory_) != VK_SUCCESS) {
+		allocateInfo.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties);
+		if (vkAllocateMemory(device_, &allocateInfo, nullptr, &buffer_memory) != VK_SUCCESS) {
 			throw std::runtime_error("VertexBuffer用のメモリ確保に失敗しました");
 		}
 		// 四番目の引数はメモリ領域内のオフセット。複数の用途で使う場合はalignmentで割り切れる値でオフセットを設定する
-		vkBindBufferMemory(device_, vertex_buffer_, vertex_buffer_memory_, 0);
+		vkBindBufferMemory(device_, buffer, buffer_memory, 0);
+	}
 
-		// ここでデータをバインドするのは適切ではない?
+	void VulkanApplication::CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+	{
+		// 転送用のコマンドバッファを確保
+		VkCommandBufferAllocateInfo allocInfo{};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandPool = transfer_command_pool_;
+		allocInfo.commandBufferCount = 1;
+		// 転送時にしか使わないのでローカル変数
+		VkCommandBuffer commandBuffer;
+		vkAllocateCommandBuffers(device_, &allocInfo, &commandBuffer);
+
+		// すぐにコマンドの記録を始める
+		VkCommandBufferBeginInfo beginInfo{};
+		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(commandBuffer, &beginInfo);
+		// コピーコマンドを記録
+		VkBufferCopy copyRegion{};
+		copyRegion.srcOffset = 0; // srcBuffer内のコピー元オフセット
+		copyRegion.dstOffset = 0; // dstBuffer内のコピー先オフセット
+		copyRegion.size = size;  // コピーするバイト数
+		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+		// 記録終了
+		vkEndCommandBuffer(commandBuffer);
+		// 記録したコマンドをキューに送ってコピーを実行
+		VkSubmitInfo submitInfo{};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &commandBuffer;
+		vkQueueSubmit(graphics_queue_, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphics_queue_);
+		// ここにフェンスを入れてもよい
+		// コマンドバッファを開放
+		vkFreeCommandBuffers(device_, transfer_command_pool_, 1, &commandBuffer);
+
+	}
+
+	void VulkanApplication::CreateVertexBuffer() {
+		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+		// Staging Bufferを用意
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		CreateBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,												// 転送元として使うことを指定
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,		// CPUからアクセス可能かつGPUとの同期が取られるバッファ
+			stagingBuffer,
+			stagingBufferMemory);
+		//Staging Bufferにデータをコピー
 		void* data;
-		vkMapMemory(device_, vertex_buffer_memory_, 0, bufferCreateInfo.size, 0, &data);
-		memcpy(data, vertices.data(), (size_t)bufferCreateInfo.size);
-		vkUnmapMemory(device_, vertex_buffer_memory_);
+		vkMapMemory(device_, stagingBufferMemory, 0, bufferSize, 0, &data);
+		memcpy(data, vertices.data(), (size_t)bufferSize);
+		vkUnmapMemory(device_, stagingBufferMemory);
+
+
+		CreateBuffer(
+			bufferSize,
+			VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,									 // GPUからのみアクセス可能なバッファとして生成する
+			vertex_buffer_,
+			vertex_buffer_memory_
+		);
+
+		// vertexbufferにはvkMapMemory出来ないのでStagingBufferを経由してコピーする
+		CopyBuffer(stagingBuffer, vertex_buffer_, bufferSize);
+		// Staging Bufferを破棄
+		vkDestroyBuffer(device_, stagingBuffer, nullptr);
+		vkFreeMemory(device_, stagingBufferMemory, nullptr);
 	}
 
 	uint32_t VulkanApplication::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
