@@ -92,6 +92,16 @@ namespace Core
 		}
 	};
 
+	/**
+	* @brief
+	* ユニフォーム変数としてバッファに送るデータを定義した行列
+	*/
+	struct UniformBufferObject {
+		glm::mat4 model;
+		glm::mat4 view;
+		glm::mat4 projection;
+	};
+
 	class VulkanApplication {
 	public:
 		const uint32_t kWidth = 800;
@@ -338,6 +348,27 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* リソースとメモリ配置の対応を定めたDescirptor Set Layout を生成する
+		*/
+		void CreateDescriptorSetLayout();
+
+		/**
+		* @fn
+		* @brief
+		* DescriptorをAllocateするために使う Descriptor pool を生成する
+		*/
+		void CreateDescriptorPool();
+
+		/**
+		* @fn
+		* @breif
+		* Descriptorへの参照を保持するDescriptor Set を生成する
+		*/
+		void CreateDescriptorSets();
+
+		/**
+		* @fn
+		* @brief
 		* 描画コマンドを処理するグラフィックスパイプラインを生成する。
 		*/
 		void CreateGraphicsPipeline();
@@ -457,6 +488,20 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* ユニフォームバッファを生成する
+		*/
+		void CreateUniformBuffers();
+
+		/**
+		* @fn
+		* @brief
+		* ユニフォームバッファの値を更新する
+		*/
+		void UpdateUniformBuffers(uint32_t curretImageIndex);
+
+		/**
+		* @fn
+		* @brief
 		* バッファに適したGPUのメモリタイプを取得する。
 		*/
 		uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
@@ -489,6 +534,9 @@ namespace Core
 		VkFormat swap_chain_image_format_;
 		VkExtent2D swap_chain_extent_;
 		VkRenderPass render_pass_;
+		VkDescriptorSetLayout descriptor_set_layout_;
+		VkDescriptorPool descriptor_pool_;
+		std::vector<VkDescriptorSet> descriptor_sets_;
 		VkPipelineLayout pipeline_layout_;
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
@@ -497,6 +545,9 @@ namespace Core
 		VkDeviceMemory vertex_buffer_memory_;
 		VkBuffer index_buffer_;
 		VkDeviceMemory index_buffer_memory_;
+		std::vector<VkBuffer> uniform_buffers_;
+		std::vector<VkDeviceMemory> uniform_buffers_memory_;
+		std::vector<void*> uniform_buffers_mapped_;
 		std::vector<VkCommandBuffer> command_buffers_;
 		std::vector<VkSemaphore> image_available_semaphores_;
 		std::vector<VkSemaphore> render_finished_semaphores_;

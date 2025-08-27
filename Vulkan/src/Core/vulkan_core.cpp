@@ -7,11 +7,14 @@
 
 #include "Core/vulkan_core.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include<stdexcept>
 #include<set>
 #include<cstdint>
 #include<limits>
 #include<algorithm>
+#include <chrono>
 
 namespace Core {
 	/**
@@ -53,11 +56,15 @@ namespace Core {
 		CreateSwapChain();
 		CreateImageViews();
 		CreateRenderPass();
+		CreateDescriptorSetLayout();
 		CreateGraphicsPipeline();
 		CreateFramebuffers();
 		CreateCommandPool();
 		CreateVertexBuffer();
 		CreateIndexBuffer();
+		CreateUniformBuffers();
+		CreateDescriptorPool();
+		CreateDescriptorSets();
 		CreateCommandBuffers();
 		CreateSyncObjects();
 	}
@@ -83,6 +90,14 @@ namespace Core {
 		}
 		CleanUpSwapChainDependents();
 		vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
+		for (size_t i = 0; i < kMaxFramesInFlight; i++)
+		{
+			vkDestroyBuffer(device_, uniform_buffers_[i], nullptr);
+			vkFreeMemory(device_, uniform_buffers_memory_[i], nullptr);
+		}
+		// descriptor set は pool が破棄された瞬間に付随して解放される
+		vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
+		vkDestroyDescriptorSetLayout(device_, descriptor_set_layout_, nullptr);
 		vkDestroyBuffer(device_, vertex_buffer_, nullptr);
 		vkFreeMemory(device_, vertex_buffer_memory_, nullptr);
 		vkDestroyBuffer(device_, index_buffer_, nullptr);
@@ -136,6 +151,8 @@ namespace Core {
 		// コマンドバッファに描画コマンドを記録
 		vkResetCommandBuffer(command_buffers_[current_frame_], 0);
 		RecordCommandBuffer(command_buffers_[current_frame_], image_index);
+		// ユニフォームバッファを更新
+		UpdateUniformBuffers(current_frame_);
 		// コマンドの提出タイミングなどを設定
 		VkSubmitInfo submit_info{};
 		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -609,6 +626,92 @@ namespace Core {
 		}
 	}
 
+	void VulkanApplication::CreateDescriptorSetLayout()
+	{
+		// UBO 向けのlayoutを設定する
+		VkDescriptorSetLayoutBinding uboBinding{};
+		uboBinding.binding = 0;											// 今回は0番
+		uboBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		uboBinding.descriptorCount = 1;
+		uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;				// 今は頂点シェーダーだけからアクセスされるものとする
+		uboBinding.pImmutableSamplers = nullptr;						// 画像のdescriptorに関連するものなので無視
+
+		// set layoutを生成
+		VkDescriptorSetLayoutCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		createInfo.bindingCount = 1;
+		createInfo.pBindings = &uboBinding;
+
+		if (vkCreateDescriptorSetLayout(device_, &createInfo, nullptr, &descriptor_set_layout_) != VK_SUCCESS)
+		{
+			throw std::runtime_error("Descriptor Set Layoutの生成に失敗しました！");
+		}
+	}
+
+	void VulkanApplication::CreateDescriptorPool()
+	{
+		// まずはプールの大きさを定める
+		VkDescriptorPoolSize poolSize{};
+		// 今回はUniform bufferのプールを作成する
+		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSize.descriptorCount = static_cast<uint32_t>(kMaxFramesInFlight);
+		// 続いてプールの作成情報をいつも通り生成
+		VkDescriptorPoolCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		createInfo.poolSizeCount = 1;
+		createInfo.pPoolSizes = &poolSize;
+		// 最大いくつのセットが割り当てられるのかは予め伝えておかないといけない
+		createInfo.maxSets = static_cast<uint32_t>(kMaxFramesInFlight);
+		if (vkCreateDescriptorPool(device_, &createInfo, nullptr, &descriptor_pool_) != VK_SUCCESS)
+		{
+			throw std::runtime_error("Descriptor Pool の生成に失敗しました！");
+		}
+	}
+
+	void VulkanApplication::CreateDescriptorSets()
+	{
+		// ここでは同じレイアウトで各フレームのDescriptor Set を生成する
+		// 全て同じであっても Allocateの際に layouts の長さとdescriptorSetCountが一致していることが求められるためコピーを作る必要がある
+		std::vector<VkDescriptorSetLayout> layouts(kMaxFramesInFlight, descriptor_set_layout_);
+		// どのようにSetをプールからAllocateするかを定める
+		VkDescriptorSetAllocateInfo allocateInfo{};
+		allocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocateInfo.descriptorPool = descriptor_pool_;
+		allocateInfo.descriptorSetCount = static_cast<uint32_t>(kMaxFramesInFlight);
+		allocateInfo.pSetLayouts = layouts.data();
+
+		// ベクトルをリサイズしてアロケーション
+		descriptor_sets_.resize(kMaxFramesInFlight);
+		if (vkAllocateDescriptorSets(device_, &allocateInfo, descriptor_sets_.data()) != VK_SUCCESS)
+		{
+			throw std::runtime_error("Descriptor set のアロケーションに失敗しました!");
+		}
+		// 割り当てられた各Descriptor Set に対して設定を行う
+		for (size_t index = 0; index < kMaxFramesInFlight; index++)
+		{
+			VkDescriptorBufferInfo bufferInfo{};
+			// descriptor set に割り当てるバッファ
+			bufferInfo.buffer = uniform_buffers_[index];
+			bufferInfo.offset = 0;
+			// setに割り当てられるバッファのデータサイズ
+			bufferInfo.range = sizeof(UniformBufferObject);
+			// Descriptor Set に書き込む情報をまとめる VkWriteDescriptorSet に情報を格納する
+			VkWriteDescriptorSet descriptorWrite{};
+			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrite.dstSet = descriptor_sets_[index];
+			descriptorWrite.dstBinding = 0;
+			descriptorWrite.dstArrayElement = 0;
+			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrite.descriptorCount = 1;
+			descriptorWrite.pBufferInfo = &bufferInfo;
+			descriptorWrite.pImageInfo = nullptr;
+			descriptorWrite.pTexelBufferView = nullptr;
+
+			// 設定したデータでdescriptor set の設定を更新
+			vkUpdateDescriptorSets(device_, 1, &descriptorWrite, 0, nullptr);
+		}
+	}
+
 	VkShaderModule VulkanApplication::CreateShaderModule(const std::vector<char>& code) {
 		VkShaderModuleCreateInfo create_info{};
 		create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -747,7 +850,7 @@ namespace Core {
 		rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizer.lineWidth = 1.0f;
 		rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-		rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizer.depthBiasEnable = VK_FALSE;
 		rasterizer.depthBiasConstantFactor = 0.0f;
 		rasterizer.depthBiasClamp = 0.0f;
@@ -789,8 +892,8 @@ namespace Core {
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info{};
 		pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipeline_layout_info.setLayoutCount = 0;
-		pipeline_layout_info.pSetLayouts = nullptr;
+		pipeline_layout_info.setLayoutCount = 1;
+		pipeline_layout_info.pSetLayouts = &descriptor_set_layout_;
 		pipeline_layout_info.pushConstantRangeCount = 0;
 		pipeline_layout_info.pPushConstantRanges = nullptr;
 
@@ -925,6 +1028,7 @@ namespace Core {
 		scissor.extent = swap_chain_extent_;
 		vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
+		vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1, &descriptor_sets_[current_frame_], 0, nullptr);
 		// 描画コマンドを発行する。
 		vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
@@ -1089,6 +1193,38 @@ namespace Core {
 		// Staging Bufferを破棄
 		vkDestroyBuffer(device_, stagingBuffer, nullptr);
 		vkFreeMemory(device_, stagingBufferMemory, nullptr);
+	}
+
+	void VulkanApplication::CreateUniformBuffers()
+	{
+		VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+		uniform_buffers_.resize(kMaxFramesInFlight);
+		uniform_buffers_memory_.resize(kMaxFramesInFlight);
+		uniform_buffers_mapped_.resize(kMaxFramesInFlight);
+
+		for (size_t i = 0; i < kMaxFramesInFlight; i++)
+		{
+			CreateBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniform_buffers_[i], uniform_buffers_memory_[i]);
+			vkMapMemory(device_, uniform_buffers_memory_[i], 0, bufferSize, 0, &uniform_buffers_mapped_[i]);
+		}
+	}
+
+	void VulkanApplication::UpdateUniformBuffers(uint32_t curretImageIndex)
+	{
+		static auto startTime = std::chrono::high_resolution_clock::now();
+
+		// 時間で更新を入れる
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+		UniformBufferObject ubo;
+		ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));				// 行列をz軸中心に回す
+		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));	// (2, 2, 2)から (0, 0, 0) を見る
+		ubo.projection = glm::perspective(glm::radians(45.0f), swap_chain_extent_.width / (float)swap_chain_extent_.height, 0.1f, 10.0f);
+		// GLM は OpenGLに対して設計されているためY軸がVulkanの向きと真逆になっている。そのためprojection行列のY軸だけひっくり返す
+		ubo.projection[1][1] *= -1;
+
+		// 更新した行列をメモリにコピーする
+		memcpy(uniform_buffers_mapped_[curretImageIndex], &ubo, sizeof(ubo));
 	}
 
 	uint32_t VulkanApplication::FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
