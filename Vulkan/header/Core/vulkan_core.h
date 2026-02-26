@@ -17,6 +17,7 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+
 #include<optional>
 
 namespace Core
@@ -348,6 +349,14 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* 引数に与えられた画像とフォーマットからビューオブジェクトを作成する
+		* @param image ビューオブジェクトの参照元となる画像オブジェクト
+		* @param format 画像オブジェクトのフォーマット
+		*/
+		VkImageView CreateImageView(VkImage image, VkFormat format);
+		/**
+		* @fn
+		* @brief
 		* リソースとメモリ配置の対応を定めたDescirptor Set Layout を生成する
 		*/
 		void CreateDescriptorSetLayout();
@@ -453,6 +462,48 @@ namespace Core
 		/**
 		* @fn
 		* @brief
+		* 画像をVulkanのオブジェクトに変換する
+		*/
+		void CreateTextureImage();
+
+		/**
+		* @fn
+		* @brief
+		* メモリに転送した画像データをVkImage及び VkDeviceMemoryに反映する
+		*/
+		void CreateImage(uint32_t textureWidth, uint32_t textureHeight, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory);;
+		
+		/**
+		* @fn 
+		* @brief 
+		* 画像の利用モードを表すlayoutを変更する
+		* 画像の種類によって最適なメモリ配置が異なるため明示的にバリアを使って遷移させる必要がある。
+		*/
+		void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+
+		/**
+		* @fn
+		* @brief
+		* バッファに書き込まれた画像データをVkImageにコピーする
+		*/
+		void CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+
+		/**
+		* @fn
+		* @brief
+		* VkImageに格納されたテクスチャ画像のデータを外部から参照する際に使用するImageViewを作成する。
+		*/
+		void CreateTextureImageView();
+
+		/**
+		* @fn
+		* @brief
+		* テクスチャをフィルタリングや変換などを掛けてサンプリングする為のサンプラーを作成する
+		*/
+		void CreateTextureSampler();
+		/**
+		* @fn
+		* @brief
 		* バッファを生成するためのヘルパー関数
 		* @param size バッファのサイズ
 		* @param usage バッファの使用用途
@@ -462,6 +513,20 @@ namespace Core
 		*/
 		void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& buffer_memory);
 		
+		/**
+		* @fn
+		* @brief
+		* データの転送などの単体の処理実行コマンドバッファを作成する
+		*/
+		VkCommandBuffer BeginSingleTimeCommands();
+
+		/**
+		* @fn
+		* @brief
+		* 引数に与えられたコマンドバッファに保存された処理をキューに送信してバッファを閉じる
+		* @param commandBuffer 処理が保存されたバッファ
+		*/
+		void EndSingleTimeCommands(VkCommandBuffer commandBuffer);
 		/**
 		* @fn
 		* @brief
@@ -547,6 +612,10 @@ namespace Core
 		VkDeviceMemory index_buffer_memory_;
 		std::vector<VkBuffer> uniform_buffers_;
 		std::vector<VkDeviceMemory> uniform_buffers_memory_;
+		VkImage texture_image_;
+		VkDeviceMemory image_device_memory_;
+		VkImageView texture_image_view_;
+		VkSampler texture_sampler_;
 		std::vector<void*> uniform_buffers_mapped_;
 		std::vector<VkCommandBuffer> command_buffers_;
 		std::vector<VkSemaphore> image_available_semaphores_;

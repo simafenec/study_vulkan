@@ -16,6 +16,9 @@
 #include<algorithm>
 #include <chrono>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 namespace Core {
 	/**
 	* 四角形描画のための頂点データ
@@ -60,6 +63,8 @@ namespace Core {
 		CreateGraphicsPipeline();
 		CreateFramebuffers();
 		CreateCommandPool();
+		CreateTextureImage();
+		CreateTextureImageView();
 		CreateVertexBuffer();
 		CreateIndexBuffer();
 		CreateUniformBuffers();
@@ -89,6 +94,10 @@ namespace Core {
 			vkDestroyFence(device_, in_flight_fences_[index], nullptr);
 		}
 		CleanUpSwapChainDependents();
+		vkDestroySampler(device_, texture_sampler_, nullptr);
+		vkDestroyImageView(device_, texture_image_view_, nullptr);
+		vkDestroyImage(device_, texture_image_, nullptr);
+		vkFreeMemory(device_, image_device_memory_, nullptr);
 		vkDestroySwapchainKHR(device_, swap_chain_, nullptr);
 		for (size_t i = 0; i < kMaxFramesInFlight; i++)
 		{
@@ -392,7 +401,9 @@ namespace Core {
 			SwapChainSupportDetails swap_chain_support = QuerySwapChainSupprot(device);
 			swap_chain_adequate = !swap_chain_support.formats_.empty() && !swap_chain_support.present_modes_.empty();
 		}
-		return indices.IsComplete() && extension_supported && swap_chain_adequate;
+		VkPhysicalDeviceFeatures features;
+		vkGetPhysicalDeviceFeatures(device, &features);
+		return indices.IsComplete() && extension_supported && swap_chain_adequate && features.samplerAnisotropy;
 	}
 	bool VulkanApplication::CheckDeviceExtensionSupport(VkPhysicalDevice device) {
 		uint32_t extension_count = 0;
@@ -450,6 +461,7 @@ namespace Core {
 		// 論理デバイスの特徴を次にまとめる。
 		// 現状は何も設定しない。　今後様々な機能を使いたくなった時に適宜フラグを立てていく
 		VkPhysicalDeviceFeatures device_features{};
+		device_features.samplerAnisotropy = VK_TRUE;
 		
 		// 論理デバイスの生成情報を次にまとめる。
 		VkDeviceCreateInfo create_info{};
@@ -605,25 +617,28 @@ namespace Core {
 	void VulkanApplication::CreateImageViews() {
 		swap_chain_image_views_.resize(swap_chain_images_.size());
 		for (size_t index = 0; index < swap_chain_images_.size(); index++) {
-			VkImageViewCreateInfo create_info{};
-			create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-			create_info.image = swap_chain_images_[index];
-			create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-			create_info.format = swap_chain_image_format_;
-			create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			create_info.subresourceRange.baseMipLevel = 0;
-			create_info.subresourceRange.levelCount = 1;
-			create_info.subresourceRange.baseArrayLayer = 0;
-			create_info.subresourceRange.layerCount = 1;
-
-			if (vkCreateImageView(device_, &create_info, nullptr, &swap_chain_image_views_[index]) != VK_SUCCESS) {
-				throw std::runtime_error("イメージビューの生成に失敗しました！");
-			}
+			swap_chain_image_views_[index] = CreateImageView(swap_chain_images_[index], swap_chain_image_format_);
 		}
+	}
+
+	VkImageView VulkanApplication::CreateImageView(VkImage image, VkFormat format)
+	{
+		VkImageViewCreateInfo create_info{};
+		create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		create_info.image = image;
+		create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		create_info.format = format;
+		create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		create_info.subresourceRange.baseMipLevel = 0;
+		create_info.subresourceRange.levelCount = 1;
+		create_info.subresourceRange.baseArrayLayer = 0;
+		create_info.subresourceRange.layerCount = 1;
+
+		VkImageView view;
+		if (vkCreateImageView(device_, &create_info, nullptr, &view) != VK_SUCCESS) {
+			throw std::runtime_error("イメージビューの生成に失敗しました！");
+		}
+		return view;
 	}
 
 	void VulkanApplication::CreateDescriptorSetLayout()
@@ -1063,6 +1078,197 @@ namespace Core {
 			}
 		}
 	}
+	void VulkanApplication::CreateTextureImage()
+	{
+		// まずはテクスチャデータを読み込む
+		int textureWidth, textureHeight, textureChannels;
+		stbi_uc* pixelData = stbi_load("images/texture.jpg", &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
+		VkDeviceSize imageSize = textureWidth * textureHeight * 4;		// ピクセル数 x 4バイト (rgba)
+		if (!pixelData)
+		{
+			throw std::runtime_error("テクスチャの読み込みに失敗しました！");
+		}
+		// ステージングバッファを作って画像データを転送
+		VkBuffer stagingBuffer;
+		VkDeviceMemory stagingBufferMemory;
+		CreateBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		void* data;
+		vkMapMemory(device_, stagingBufferMemory, 0, imageSize, 0, &data);
+		memcpy(data, pixelData, static_cast<size_t>(imageSize));
+		vkUnmapMemory(device_, stagingBufferMemory);
+		// 転送したら画像データも解放
+		stbi_image_free(pixelData);
+		// バッファに転送
+		CreateImage(textureWidth, textureHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image_, image_device_memory_);
+		// 画像レイアウトをTRANSFER用に変更する
+		TransitionImageLayout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		// バッファからVkImageにデータをコピーする
+		CopyBufferToImage(stagingBuffer, texture_image_, static_cast<uint32_t>(textureWidth), static_cast<uint32_t>(textureHeight));
+		// 画像レイアウトをシェーダーアクセス出来る状態へ変化させる
+		TransitionImageLayout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		//ステージングバッファを破棄する
+		vkDestroyBuffer(device_, stagingBuffer, nullptr);
+		vkFreeMemory(device_, stagingBufferMemory, nullptr);
+	}
+	void VulkanApplication::CreateImage(uint32_t textureWidth, uint32_t textureHeight, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory)
+	{
+		// まずはVkImageを生成するために必要な情報を埋めていく
+		VkImageCreateInfo createInfo{};
+		createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		createInfo.imageType = VK_IMAGE_TYPE_2D;
+		createInfo.extent.width = textureWidth;
+		createInfo.extent.height = textureHeight;
+		createInfo.extent.depth = 1;
+		createInfo.mipLevels = 1;
+		createInfo.arrayLayers = 1;
+		createInfo.format = imageFormat;
+		createInfo.tiling = imageTiling;
+		createInfo.usage = usage;
+		createInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+		// imageを生成
+		if (vkCreateImage(device_, &createInfo, nullptr, &image) != VK_SUCCESS)
+		{
+			throw std::runtime_error("Imageバッファの作成に失敗しました！");
+		}
+		// 画像に対応するメモリのRequirementを取得し、それに沿って画像用のメモリをアロケーションする
+		VkMemoryRequirements imageMemoryRequirements;
+		vkGetImageMemoryRequirements(device_, image, &imageMemoryRequirements);
+
+		VkMemoryAllocateInfo allocateInfo{};
+		allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocateInfo.allocationSize = imageMemoryRequirements.size;
+		allocateInfo.memoryTypeIndex = FindMemoryType(imageMemoryRequirements.memoryTypeBits, properties);
+
+		if (vkAllocateMemory(device_, &allocateInfo, nullptr, &deviceMemory) != VK_SUCCESS)
+		{
+			throw std::runtime_error("画像用のメモリの確保に失敗しました！");
+		}
+		vkBindImageMemory(device_, image, deviceMemory, 0);
+
+	}
+	void VulkanApplication::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout)
+	{
+		// コマンドバッファに実行する処理を記録する
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+		// レイアウトを明示的に変更するためのバリアを用意する。
+		VkImageMemoryBarrier barrier{};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.oldLayout = oldLayout;
+		barrier.newLayout = newLayout;
+		// もしキューファミリーの所持権を移動させるバリアを張るときはちゃんとインデックスを設定する必要があるが、ここでは関係ないので無視
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		// バリアを張るに当たり影響のある画像の情報及び画像の部分をバリアにも伝えておく
+		barrier.image = image;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseMipLevel = 0;
+		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+		// どの種類の操作がバリアの前に実行される必要があるのか / どの種類の操作がバリアを待機する必要があるのかを指定する
+
+		VkPipelineStageFlags sourceStage;
+		VkPipelineStageFlags destinationStage;
+		// もし前のレイアウトが定義されていない、もしくは次のレイアウトが転送先の画像になるように変更する場合
+		// 実行しなければいけない命令が発生するパイプラインはないが、Transferを実行する操作はレイアウト移行後に実行してもらう必要がある
+		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED || newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+		{
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		}
+		// 前のレイアウトが転送先の画像、もしくは次のレイアウトがシェーダーからの読み込みだった場合
+		// 先に転送を終わらせてもらう必要があり、シェーダーからの読み取りは待ってもらう必要がある
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL || newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else
+		{
+			throw std::invalid_argument("未対応のレイアウト遷移が指定されました");
+		}
+
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			sourceStage,		// バリアの前に実行されるべき操作が発生するパイプラインステージを指定する
+			destinationStage,	// バリアを待つ操作が発生するパイプラインステージを指定する
+			0,					// バリアの条件 BY_REGION_BITを指定するとリージョン単位の条件に変わり、リソースの一部がすでに書き込まれている場合、その部分の読み込みをすぐに開始してもよくなる
+			0, nullptr,			// メモリバリアの配列
+			0, nullptr,			// バッファメモリバリアの配列
+			1, &barrier			// イメージメモリバリアの配列
+		);
+		EndSingleTimeCommands(commandBuffer);
+	}
+	void VulkanApplication::CopyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+	{
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+		// コピーのために情報を詰める
+		VkBufferImageCopy region{};
+		// バッファのどこから画像データが始まるかを表す
+		region.bufferOffset = 0;
+		// 画像のパディング設定
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.imageSubresource.mipLevel = 0;
+		region.imageSubresource.baseArrayLayer = 0;
+		region.imageSubresource.layerCount = 1;
+
+		region.imageOffset = { 0, 0, 0 };
+		region.imageExtent = { width, height, 1 };
+
+		vkCmdCopyBufferToImage(
+			commandBuffer,
+			buffer,
+			image,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1,
+			&region
+		);
+		EndSingleTimeCommands(commandBuffer);
+	}
+	void VulkanApplication::CreateTextureImageView()
+	{
+		texture_image_view_ = CreateImageView(texture_image_, VK_FORMAT_R8G8B8A8_SRGB);
+	}
+	void VulkanApplication::CreateTextureSampler()
+	{
+		VkSamplerCreateInfo samplerInfo{};
+		samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		samplerInfo.magFilter = VK_FILTER_LINEAR;					// サンプリングする際にテクセルをどのように拡大するか ここでは線形的に拡大
+		samplerInfo.minFilter = VK_FILTER_LINEAR;					// サンプリングする際にテクセルをどのように縮小するか ここでは線形的に縮小
+		// 画像の外の各軸ごとのアドレスモードを指定する
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		// 異方性サンプリングの設定
+		samplerInfo.anisotropyEnable = VK_TRUE;
+		VkPhysicalDeviceProperties prop{};
+		vkGetPhysicalDeviceProperties(physical_device_, &prop);
+		samplerInfo.maxAnisotropy = prop.limits.maxSamplerAnisotropy;
+		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+		samplerInfo.compareEnable = VK_FALSE;
+		samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerInfo.mipLodBias = 0.0f;
+		samplerInfo.minLod = 0.0f;
+		samplerInfo.maxLod = 0.0f;
+
+		if(vkCreateSampler(device_, &samplerInfo, nullptr, &texture_sampler_) != VK_SUCCESS)
+		{
+			throw std::runtime_error("テクスチャサンプラーの生成に失敗しました");
+		}
+	}
 	void VulkanApplication::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& buffer_memory)
 	{
 		VkBufferCreateInfo bufferCreateInfo{};
@@ -1088,7 +1294,7 @@ namespace Core {
 		vkBindBufferMemory(device_, buffer, buffer_memory, 0);
 	}
 
-	void VulkanApplication::CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+	VkCommandBuffer VulkanApplication::BeginSingleTimeCommands()
 	{
 		// 転送用のコマンドバッファを確保
 		VkCommandBufferAllocateInfo allocInfo{};
@@ -1105,12 +1311,11 @@ namespace Core {
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		vkBeginCommandBuffer(commandBuffer, &beginInfo);
-		// コピーコマンドを記録
-		VkBufferCopy copyRegion{};
-		copyRegion.srcOffset = 0; // srcBuffer内のコピー元オフセット
-		copyRegion.dstOffset = 0; // dstBuffer内のコピー先オフセット
-		copyRegion.size = size;  // コピーするバイト数
-		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+		return commandBuffer;
+	}
+
+	void VulkanApplication::EndSingleTimeCommands(VkCommandBuffer commandBuffer)
+	{
 		// 記録終了
 		vkEndCommandBuffer(commandBuffer);
 		// 記録したコマンドをキューに送ってコピーを実行
@@ -1123,6 +1328,18 @@ namespace Core {
 		// ここにフェンスを入れてもよい
 		// コマンドバッファを開放
 		vkFreeCommandBuffers(device_, transfer_command_pool_, 1, &commandBuffer);
+	}
+
+	void VulkanApplication::CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+	{
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+		// コピーコマンドを記録
+		VkBufferCopy copyRegion{};
+		copyRegion.srcOffset = 0; // srcBuffer内のコピー元オフセット
+		copyRegion.dstOffset = 0; // dstBuffer内のコピー先オフセット
+		copyRegion.size = size;  // コピーするバイト数
+		vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+		EndSingleTimeCommands(commandBuffer);
 
 	}
 
