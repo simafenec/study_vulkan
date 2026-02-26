@@ -25,10 +25,10 @@ namespace Core {
 	* 仮置き
 	*/
 	std::vector<Vertex> vertices = {
-		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},	// 左上 赤色
-		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},	// 右上 緑色
-		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},		// 右下 青色
-		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}		// 左下 白色
+		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},	// 左上 赤色
+		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},	// 右上 緑色
+		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},		// 右下 青色
+		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}		// 左下 白色
 	};
 	/**
 	* 四角形描画のためのインデックスデータ
@@ -65,6 +65,7 @@ namespace Core {
 		CreateCommandPool();
 		CreateTextureImage();
 		CreateTextureImageView();
+		CreateTextureSampler();
 		CreateVertexBuffer();
 		CreateIndexBuffer();
 		CreateUniformBuffers();
@@ -651,11 +652,20 @@ namespace Core {
 		uboBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;				// 今は頂点シェーダーだけからアクセスされるものとする
 		uboBinding.pImmutableSamplers = nullptr;						// 画像のdescriptorに関連するものなので無視
 
+		// 次にテクスチャサンプラー用のレイアウトを設定する
+		VkDescriptorSetLayoutBinding samplerBinding{};
+		samplerBinding.binding = 1;
+		samplerBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		samplerBinding.descriptorCount = 1;
+		samplerBinding.pImmutableSamplers = nullptr;
+		samplerBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;		// テクスチャ等の色情報はフラグメントシェーダーで扱う
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboBinding, samplerBinding };
 		// set layoutを生成
 		VkDescriptorSetLayoutCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		createInfo.bindingCount = 1;
-		createInfo.pBindings = &uboBinding;
+		createInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+		createInfo.pBindings = bindings.data();
 
 		if (vkCreateDescriptorSetLayout(device_, &createInfo, nullptr, &descriptor_set_layout_) != VK_SUCCESS)
 		{
@@ -666,15 +676,17 @@ namespace Core {
 	void VulkanApplication::CreateDescriptorPool()
 	{
 		// まずはプールの大きさを定める
-		VkDescriptorPoolSize poolSize{};
+		std::array<VkDescriptorPoolSize, 2> poolSizes{};
 		// 今回はUniform bufferのプールを作成する
-		poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		poolSize.descriptorCount = static_cast<uint32_t>(kMaxFramesInFlight);
+		poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		poolSizes[0].descriptorCount = static_cast<uint32_t>(kMaxFramesInFlight);
+		poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		poolSizes[1].descriptorCount = static_cast<uint32_t>(kMaxFramesInFlight);
 		// 続いてプールの作成情報をいつも通り生成
 		VkDescriptorPoolCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		createInfo.poolSizeCount = 1;
-		createInfo.pPoolSizes = &poolSize;
+		createInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+		createInfo.pPoolSizes = poolSizes.data();
 		// 最大いくつのセットが割り当てられるのかは予め伝えておかないといけない
 		createInfo.maxSets = static_cast<uint32_t>(kMaxFramesInFlight);
 		if (vkCreateDescriptorPool(device_, &createInfo, nullptr, &descriptor_pool_) != VK_SUCCESS)
@@ -710,20 +722,31 @@ namespace Core {
 			bufferInfo.offset = 0;
 			// setに割り当てられるバッファのデータサイズ
 			bufferInfo.range = sizeof(UniformBufferObject);
+			// image sampler の為のディスクリプタ設定
+			VkDescriptorImageInfo imageInfo{};
+			imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			imageInfo.imageView = texture_image_view_;
+			imageInfo.sampler = texture_sampler_;
 			// Descriptor Set に書き込む情報をまとめる VkWriteDescriptorSet に情報を格納する
-			VkWriteDescriptorSet descriptorWrite{};
-			descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptorWrite.dstSet = descriptor_sets_[index];
-			descriptorWrite.dstBinding = 0;
-			descriptorWrite.dstArrayElement = 0;
-			descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			descriptorWrite.descriptorCount = 1;
-			descriptorWrite.pBufferInfo = &bufferInfo;
-			descriptorWrite.pImageInfo = nullptr;
-			descriptorWrite.pTexelBufferView = nullptr;
+			std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+			descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[0].dstSet = descriptor_sets_[index];
+			descriptorWrites[0].dstBinding = 0;
+			descriptorWrites[0].dstArrayElement = 0;
+			descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptorWrites[0].descriptorCount = 1;
+			descriptorWrites[0].pBufferInfo = &bufferInfo;
 
+			// image samplerのdescriptorに書き込む情報の設定
+			descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptorWrites[1].dstSet = descriptor_sets_[index];
+			descriptorWrites[1].dstBinding = 1;
+			descriptorWrites[1].dstArrayElement = 0;
+			descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			descriptorWrites[1].descriptorCount = 1;
+			descriptorWrites[1].pImageInfo = &imageInfo;
 			// 設定したデータでdescriptor set の設定を更新
-			vkUpdateDescriptorSets(device_, 1, &descriptorWrite, 0, nullptr);
+			vkUpdateDescriptorSets(device_, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 		}
 	}
 
