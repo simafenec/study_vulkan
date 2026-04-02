@@ -16,6 +16,8 @@
 // Vulkanの各種関数や構造体、列挙型を提供してくれるヘッダー
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 
 #include<optional>
@@ -53,7 +55,7 @@ namespace Core
 	* Vulkan側で頂点データを扱うために使用する構造体。
 	*/
 	struct Vertex {
-		glm::vec2 pos;
+		glm::vec3 pos;
 		glm::vec3 color;
 		glm::vec2 texCoord;
 		/**
@@ -80,8 +82,8 @@ namespace Core
 			// 座標データをどのlocationから頂点シェーダーに与えるか？今回は0番
 			// Shader の (location = 0)のデータに与えられる
 			attribute_descriptions[0].location = 0;
-			// 頂点はvec2なので R32G32で指定
-			attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+			// 頂点はvec3なので R32G32B32で指定
+			attribute_descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
 			attribute_descriptions[0].offset = offsetof(Vertex, pos);
 
 			attribute_descriptions[1].binding = 0;
@@ -359,7 +361,7 @@ namespace Core
 		* @param image ビューオブジェクトの参照元となる画像オブジェクト
 		* @param format 画像オブジェクトのフォーマット
 		*/
-		VkImageView CreateImageView(VkImage image, VkFormat format);
+		VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
 		/**
 		* @fn
 		* @brief
@@ -465,6 +467,35 @@ namespace Core
 		*/
 		void CreateSyncObjects();
 
+		/**
+		* @fn
+		* @brief
+		* 深度バッファ用のリソースを生成する。
+		*/
+		void CreateDepthResources();
+
+		/**
+		* @fn
+		* @brief
+		* 候補となるフォーマットの中から引数に与えられたフラグを満たすものを探して返す
+		*/
+		VkFormat FindSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+		
+		/**
+		* @fn
+		* @brief
+		* 深度バッファに適したフォーマットを探す
+		*/
+		VkFormat FindDepthFormat();
+
+		/**
+		* @fn
+		* @brief
+		* 引数に与えられたフォーマットがステンシルテストを行うためのコンポーネントを持つかどうか
+		*/
+		bool HasStencilComponent(VkFormat format) {
+			return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+		}
 		/**
 		* @fn
 		* @brief
@@ -622,6 +653,10 @@ namespace Core
 		VkDeviceMemory image_device_memory_;
 		VkImageView texture_image_view_;
 		VkSampler texture_sampler_;
+		// depth buffer
+		VkImage depth_image_;
+		VkDeviceMemory depth_image_device_memory_;
+		VkImageView depth_image_view_;
 		std::vector<void*> uniform_buffers_mapped_;
 		std::vector<VkCommandBuffer> command_buffers_;
 		std::vector<VkSemaphore> image_available_semaphores_;

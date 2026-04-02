@@ -25,10 +25,15 @@ namespace Core {
 	* 仮置き
 	*/
 	std::vector<Vertex> vertices = {
-		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},	// 左上 赤色
-		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},	// 右上 緑色
-		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},		// 右下 青色
-		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}		// 左下 白色
+		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},	// 左上 赤色
+		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},	// 右上 緑色
+		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},		// 右下 青色
+		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},	// 左下 白色
+
+		{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},	// 左上 赤色
+		{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},	// 右上 緑色
+		{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},		// 右下 青色
+		{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}		// 左下 白色
 	};
 	/**
 	* 四角形描画のためのインデックスデータ
@@ -36,7 +41,9 @@ namespace Core {
 	*/
 	std::vector<uint16_t> indices = {
 		0, 1, 2,		// 右上の三角形
-		2, 3, 0			// 左下の三角形
+		2, 3, 0,		// 左下の三角形
+		4, 5, 6,
+		6, 7, 4
 	};
 	void VulkanApplication::InitWindow() {
 		glfwInit();
@@ -61,8 +68,9 @@ namespace Core {
 		CreateRenderPass();
 		CreateDescriptorSetLayout();
 		CreateGraphicsPipeline();
-		CreateFramebuffers();
 		CreateCommandPool();
+		CreateDepthResources();
+		CreateFramebuffers();
 		CreateTextureImage();
 		CreateTextureImageView();
 		CreateTextureSampler();
@@ -131,6 +139,9 @@ namespace Core {
 		for (auto image_view : swap_chain_image_views_) {
 			vkDestroyImageView(device_, image_view, nullptr);
 		}
+		vkDestroyImageView(device_, depth_image_view_, nullptr);
+		vkDestroyImage(device_, depth_image_, nullptr);
+		vkFreeMemory(device_, depth_image_device_memory_, nullptr);
 		vkDestroyPipeline(device_, graphics_pipeline_, nullptr);
 		vkDestroyPipelineLayout(device_, pipeline_layout_, nullptr);
 		vkDestroyRenderPass(device_, render_pass_, nullptr);
@@ -618,18 +629,18 @@ namespace Core {
 	void VulkanApplication::CreateImageViews() {
 		swap_chain_image_views_.resize(swap_chain_images_.size());
 		for (size_t index = 0; index < swap_chain_images_.size(); index++) {
-			swap_chain_image_views_[index] = CreateImageView(swap_chain_images_[index], swap_chain_image_format_);
+			swap_chain_image_views_[index] = CreateImageView(swap_chain_images_[index], swap_chain_image_format_, VK_IMAGE_ASPECT_COLOR_BIT);
 		}
 	}
 
-	VkImageView VulkanApplication::CreateImageView(VkImage image, VkFormat format)
+	VkImageView VulkanApplication::CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags)
 	{
 		VkImageViewCreateInfo create_info{};
 		create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		create_info.image = image;
 		create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
 		create_info.format = format;
-		create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		create_info.subresourceRange.aspectMask = aspectFlags;
 		create_info.subresourceRange.baseMipLevel = 0;
 		create_info.subresourceRange.levelCount = 1;
 		create_info.subresourceRange.baseArrayLayer = 0;
@@ -779,25 +790,45 @@ namespace Core {
 		color_attachment_reference.attachment = 0;
 		color_attachment_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+		// 深度テクスチャのアタッチメント設定
+		VkAttachmentDescription depth_attachment{};
+		depth_attachment.format = FindDepthFormat();
+		depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;				// どうせ描画が完了したら書き換わるので保存は気にしない
+		depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentReference depth_attachment_ref{};
+		depth_attachment_ref.attachment = 1;
+		depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+
 		VkSubpassDescription subpass{};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &color_attachment_reference;
+		subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
 		// サブパス依存性設定
 		VkSubpassDependency dependency{};
 		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
 		// 今はサブパスが一つしかないので0番目のインデックスを指定
 		dependency.dstSubpass = 0;
-		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependency.srcAccessMask = 0;
-		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+		dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 		
+
+		std::array<VkAttachmentDescription, 2 > attachments = { color_attachment, depth_attachment };
+
 		VkRenderPassCreateInfo render_pass_info{};
 		render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-		render_pass_info.attachmentCount = 1;
-		render_pass_info.pAttachments = &color_attachment;
+		render_pass_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+		render_pass_info.pAttachments = attachments.data();
 		render_pass_info.subpassCount = 1;
 		render_pass_info.pSubpasses = &subpass;
 		render_pass_info.dependencyCount = 1;
@@ -928,12 +959,29 @@ namespace Core {
 		color_blending.blendConstants[2] = 0.0f;
 		color_blending.blendConstants[3] = 0.0f;
 
+		// depth buffer をパイプライン上に載せるための設定
+		VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+		depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		depth_stencil.depthTestEnable = VK_TRUE;
+		depth_stencil.depthWriteEnable = VK_TRUE;
+		// depthが小さい = カメラに近い　なので less で比較
+		depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+		// depth boundsテスト
+		depth_stencil.depthBoundsTestEnable = VK_FALSE;
+		depth_stencil.minDepthBounds = 0.0f;
+		depth_stencil.maxDepthBounds = 1.0f;
+		// stencil テスト用設定　今は使わない
+		depth_stencil.stencilTestEnable = VK_FALSE;
+		depth_stencil.front = {};
+		depth_stencil.back = {};
+
 		VkPipelineLayoutCreateInfo pipeline_layout_info{};
 		pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 		pipeline_layout_info.setLayoutCount = 1;
 		pipeline_layout_info.pSetLayouts = &descriptor_set_layout_;
 		pipeline_layout_info.pushConstantRangeCount = 0;
 		pipeline_layout_info.pPushConstantRanges = nullptr;
+		
 
 		if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout_) != VK_SUCCESS) {
 			throw std::runtime_error("パイプラインレイアウト生成に失敗しました!");
@@ -948,7 +996,7 @@ namespace Core {
 		pipeline_info.pViewportState = &viewport_state;
 		pipeline_info.pRasterizationState = &rasterizer;
 		pipeline_info.pMultisampleState = &multisampling;
-		pipeline_info.pDepthStencilState = nullptr;
+		pipeline_info.pDepthStencilState = &depth_stencil;
 		pipeline_info.pColorBlendState = &color_blending;
 		pipeline_info.pDynamicState = &dynamic_state;
 		pipeline_info.layout = pipeline_layout_;
@@ -971,12 +1019,12 @@ namespace Core {
 		swap_chain_frame_buffers_.resize(swap_chain_image_views_.size());
 		// 各ImageViewに対応するフレームバッファを作成する。
 		for (size_t i = 0; i < swap_chain_image_views_.size(); i++) {
-			VkImageView attachments[] = {swap_chain_image_views_[i]};
+			std::array<VkImageView,2> attachments = {swap_chain_image_views_[i], depth_image_view_};
 			VkFramebufferCreateInfo frame_buffer_info{};
 			frame_buffer_info.renderPass = render_pass_;
 			frame_buffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-			frame_buffer_info.attachmentCount = 1;
-			frame_buffer_info.pAttachments = attachments;
+			frame_buffer_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+			frame_buffer_info.pAttachments = attachments.data();
 			frame_buffer_info.width = swap_chain_extent_.width;
 			frame_buffer_info.height = swap_chain_extent_.height;
 			frame_buffer_info.layers = 1;
@@ -1039,9 +1087,13 @@ namespace Core {
 		render_pass_info.framebuffer = swap_chain_frame_buffers_[image_index];
 		render_pass_info.renderArea.offset = { 0, 0 };
 		render_pass_info.renderArea.extent = swap_chain_extent_;
-		VkClearValue clear_color = { {{0.0f, 0.0f, 0.0f, 1.0f}} };
-		render_pass_info.clearValueCount = 1;
-		render_pass_info.pClearValues = &clear_color;
+		std::array<VkClearValue, 2> clear_values{};
+		clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+		// depth, stencil で指定
+		// depth buffer における depth の範囲は 0.0 - 1.0 (0.0 -> near plane / 1.0 -> far plane)
+		clear_values[1].depthStencil = { 1.0f, 0 };
+		render_pass_info.clearValueCount = static_cast<uint32_t>(clear_values.size());
+		render_pass_info.pClearValues = clear_values.data();
 		vkCmdBeginRenderPass(command_buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
 		// 描画に使うグラフィックスパイプラインを指定する。
@@ -1100,6 +1152,50 @@ namespace Core {
 				throw std::runtime_error("同期オブジェクトの生成に失敗しました！");
 			}
 		}
+	}
+	void VulkanApplication::CreateDepthResources()
+	{
+		VkFormat depthFormat = FindDepthFormat();
+		CreateImage(
+			swap_chain_extent_.width,
+			swap_chain_extent_.height,
+			depthFormat,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			depth_image_,
+			depth_image_device_memory_
+		);
+		depth_image_view_ = CreateImageView(depth_image_, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+		TransitionImageLayout(depth_image_, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+	}
+	VkFormat VulkanApplication::FindSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
+	{
+		for (VkFormat format : candidates)
+		{
+			VkFormatProperties props;
+			// フォーマットの情報取得
+			vkGetPhysicalDeviceFormatProperties(physical_device_, format, &props);
+			if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features)
+			{
+				return format;
+			}
+			else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features)
+			{
+				return format;
+			}
+		}
+		throw std::runtime_error("引数に与えられた条件を満たすフォーマットが見つかりませんでした");
+	}
+	VkFormat VulkanApplication::FindDepthFormat()
+	{
+		return FindSupportedFormat(
+			{VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+		);
 	}
 	void VulkanApplication::CreateTextureImage()
 	{
@@ -1197,6 +1293,19 @@ namespace Core {
 		VkPipelineStageFlags destinationStage;
 		// もし前のレイアウトが定義されていない、もしくは次のレイアウトが転送先の画像になるように変更する場合
 		// 実行しなければいけない命令が発生するパイプラインはないが、Transferを実行する操作はレイアウト移行後に実行してもらう必要がある
+		if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+		{
+			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			if (HasStencilComponent(format))
+			{
+				barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+			}
+		}
+		else
+		{
+			barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		}
+
 		if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED || newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
 		{
 			barrier.srcAccessMask = 0;
@@ -1214,6 +1323,14 @@ namespace Core {
 
 			sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+		{
+			barrier.srcAccessMask = 0;
+			barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+			sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 		}
 		else
 		{
@@ -1261,7 +1378,7 @@ namespace Core {
 	}
 	void VulkanApplication::CreateTextureImageView()
 	{
-		texture_image_view_ = CreateImageView(texture_image_, VK_FORMAT_R8G8B8A8_SRGB);
+		texture_image_view_ = CreateImageView(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 	void VulkanApplication::CreateTextureSampler()
 	{
@@ -1500,7 +1617,9 @@ namespace Core {
 		// 古いスワップチェーンに依存しているオブジェクトを破棄する
 		CleanUpSwapChainDependents();
 		// 依存オブジェクトを再生成する
+		// image view と depth resource はフレームバッファよりも前に作ろうね
 		CreateImageViews();
+		CreateDepthResources();
 		CreateRenderPass();
 		CreateGraphicsPipeline();
 		CreateFramebuffers();
