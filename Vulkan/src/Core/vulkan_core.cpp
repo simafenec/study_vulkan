@@ -15,36 +15,15 @@
 #include<limits>
 #include<algorithm>
 #include <chrono>
+#include <unordered_map>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-namespace Core {
-	/**
-	* 四角形描画のための頂点データ
-	* 仮置き
-	*/
-	std::vector<Vertex> vertices = {
-		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},	// 左上 赤色
-		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},	// 右上 緑色
-		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},		// 右下 青色
-		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},	// 左下 白色
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
 
-		{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},	// 左上 赤色
-		{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},	// 右上 緑色
-		{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},		// 右下 青色
-		{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}		// 左下 白色
-	};
-	/**
-	* 四角形描画のためのインデックスデータ
-	* 
-	*/
-	std::vector<uint16_t> indices = {
-		0, 1, 2,		// 右上の三角形
-		2, 3, 0,		// 左下の三角形
-		4, 5, 6,
-		6, 7, 4
-	};
+namespace Core {
 	void VulkanApplication::InitWindow() {
 		glfwInit();
 		// GLFWはOpenGLのcontextを作るために設計されているため、まずそれを制御する必要がある。
@@ -74,6 +53,7 @@ namespace Core {
 		CreateTextureImage();
 		CreateTextureImageView();
 		CreateTextureSampler();
+		LoadModel();
 		CreateVertexBuffer();
 		CreateIndexBuffer();
 		CreateUniformBuffers();
@@ -1102,7 +1082,7 @@ namespace Core {
 		VkBuffer vertexBuffers[] = { vertex_buffer_ };
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(command_buffer, 0, 1, vertexBuffers, offsets);
-		vkCmdBindIndexBuffer(command_buffer, index_buffer_, 0, VK_INDEX_TYPE_UINT16);	// 元のvectorがuint16_tなのでそれに合わせる
+		vkCmdBindIndexBuffer(command_buffer, index_buffer_, 0, VK_INDEX_TYPE_UINT32);	// 元のvectorがuint16_tなのでそれに合わせる
 		// ビューポートとシザー矩形を設定する
 		VkViewport viewport{};
 		viewport.x = 0.0f;
@@ -1120,7 +1100,7 @@ namespace Core {
 
 		vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout_, 0, 1, &descriptor_sets_[current_frame_], 0, nullptr);
 		// 描画コマンドを発行する。
-		vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+		vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(indices_.size()), 1, 0, 0, 0);
 
 		// レンダーパスを閉じる
 		vkCmdEndRenderPass(command_buffer);
@@ -1201,7 +1181,7 @@ namespace Core {
 	{
 		// まずはテクスチャデータを読み込む
 		int textureWidth, textureHeight, textureChannels;
-		stbi_uc* pixelData = stbi_load("images/texture.jpg", &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
+		stbi_uc* pixelData = stbi_load(kModelTexturePath.c_str(), &textureWidth, &textureHeight, &textureChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = textureWidth * textureHeight * 4;		// ピクセル数 x 4バイト (rgba)
 		if (!pixelData)
 		{
@@ -1483,8 +1463,51 @@ namespace Core {
 
 	}
 
+	void VulkanApplication::LoadModel()
+	{
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+		std::vector<tinyobj::material_t> materials;
+		std::string err;
+		std::string warn;
+
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, kModelPath.c_str()))
+		{
+			throw std::runtime_error(err);
+		}
+		// 頂点の重複をなくすために頂点ごとに一意なインデックスを振って管理する
+		// Vertexのハッシュ値計算を実装しないとこれは実行できない (unordered_mapのキーはハッシュ値管理のため)
+		std::unordered_map<Vertex, uint32_t> unique_vertices{};
+		for (const auto& shape : shapes)
+		{
+			for (const auto& index : shape.mesh.indices)
+			{
+				Vertex vertex{};
+				vertex.pos = {
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2],
+				};
+				vertex.texCoord = {
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					// Vulkanはテクスチャの上端の座標を 0 としているが、objフォーマットは画像の下端を0としているため、0-1の間で反転させる必要がある。
+					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+				};
+				vertex.color = { 1.0f, 1.0f, 1.0f };
+				// Vertex構造体の等価比較関数がないと動かない
+				if (unique_vertices.count(vertex) == 0)
+				{
+					unique_vertices[vertex] = static_cast<uint32_t>(vertices_.size());
+					vertices_.push_back(vertex);
+				}
+				indices_.push_back(unique_vertices[vertex]);
+			}
+		}
+
+	}
+
 	void VulkanApplication::CreateVertexBuffer() {
-		VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+		VkDeviceSize bufferSize = sizeof(vertices_[0]) * vertices_.size();
 
 		// Staging Bufferを用意
 		VkBuffer stagingBuffer;
@@ -1498,7 +1521,7 @@ namespace Core {
 		//Staging Bufferにデータをコピー
 		void* data;
 		vkMapMemory(device_, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, vertices.data(), (size_t)bufferSize);
+		memcpy(data, vertices_.data(), (size_t)bufferSize);
 		vkUnmapMemory(device_, stagingBufferMemory);
 
 
@@ -1519,7 +1542,7 @@ namespace Core {
 
 	void VulkanApplication::CreateIndexBuffer()
 	{
-		VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+		VkDeviceSize bufferSize = sizeof(indices_[0]) * indices_.size();
 
 		// Staging Bufferを用意
 		VkBuffer stagingBuffer;
@@ -1533,7 +1556,7 @@ namespace Core {
 		//Staging Bufferにデータをコピー
 		void* data;
 		vkMapMemory(device_, stagingBufferMemory, 0, bufferSize, 0, &data);
-		memcpy(data, indices.data(), (size_t)bufferSize);
+		memcpy(data, indices_.data(), (size_t)bufferSize);
 		vkUnmapMemory(device_, stagingBufferMemory);
 
 

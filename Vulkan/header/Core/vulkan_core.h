@@ -10,6 +10,7 @@
 #include<iostream>
 #include<fstream>
 #include<array>
+#include<optional>
 
 // ウィンドウ生成に関する各種機能を宣言するヘッダー
 #define GLFW_INCLUDE_VULKAN 1
@@ -19,8 +20,9 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
-
-#include<optional>
+// glmのハッシュ値計算は実験機能なので有効にするにはマクロをつけないとダメ
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 
 namespace Core
 {
@@ -99,6 +101,10 @@ namespace Core
 			attribute_descriptions[2].offset = offsetof(Vertex, texCoord);
 			return attribute_descriptions;
 		}
+
+		bool operator==(const Vertex& other) const {
+			return pos == other.pos && color == other.color && texCoord == other.texCoord;
+		}
 	};
 
 	/**
@@ -115,6 +121,9 @@ namespace Core
 	public:
 		const uint32_t kWidth = 800;
 		const uint32_t kHeight = 600;
+
+		const std::string kModelPath = "sample/mesh/viking_room.obj";
+		const std::string kModelTexturePath = "sample/texture/viking_room.png";
 	private:
 		const std::vector<const char*> kValidationLayers = {
 			"VK_LAYER_KHRONOS_validation"
@@ -573,6 +582,15 @@ namespace Core
 		* @param size バッファの大きさ
 		*/
 		void CopyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+
+		/**
+		* @fn
+		* @brief
+		* モデルを読み込む
+		* 
+		*/
+		void LoadModel();
+
 		/**
 		* @fn
 		* @brief
@@ -643,10 +661,16 @@ namespace Core
 		VkPipeline graphics_pipeline_;
 		VkCommandPool command_pool_;
 		VkCommandPool transfer_command_pool_;
+
+		std::vector<Vertex> vertices_;
+		std::vector<uint32_t> indices_;
+
 		VkBuffer vertex_buffer_;
 		VkDeviceMemory vertex_buffer_memory_;
+
 		VkBuffer index_buffer_;
 		VkDeviceMemory index_buffer_memory_;
+
 		std::vector<VkBuffer> uniform_buffers_;
 		std::vector<VkDeviceMemory> uniform_buffers_memory_;
 		VkImage texture_image_;
@@ -664,5 +688,16 @@ namespace Core
 		std::vector<VkFence> in_flight_fences_;
 		uint32_t current_frame_ = 0;
 		bool framebuffer_resized_ = false;
+	};
+}
+
+namespace std {
+	template<> struct hash<Core::Vertex> {
+		size_t operator()(Core::Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^
+				(hash < glm::vec3 >()(vertex.color) << 1)) >> 1) ^
+				(hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+
 	};
 }
