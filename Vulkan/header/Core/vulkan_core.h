@@ -370,7 +370,7 @@ namespace Core
 		* @param image ビューオブジェクトの参照元となる画像オブジェクト
 		* @param format 画像オブジェクトのフォーマット
 		*/
-		VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
+		VkImageView CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipMapLevels);
 		/**
 		* @fn
 		* @brief
@@ -517,7 +517,16 @@ namespace Core
 		* @brief
 		* メモリに転送した画像データをVkImage及び VkDeviceMemoryに反映する
 		*/
-		void CreateImage(uint32_t textureWidth, uint32_t textureHeight, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory);;
+		void CreateImage(
+			uint32_t textureWidth,
+			uint32_t textureHeight,
+			uint32_t mipMapLevels,
+			VkFormat imageFormat,
+			VkImageTiling imageTiling,
+			VkImageUsageFlags usage,
+			VkMemoryPropertyFlags properties,
+			VkImage& image,
+			VkDeviceMemory& deviceMemory);
 		
 		/**
 		* @fn 
@@ -525,7 +534,7 @@ namespace Core
 		* 画像の利用モードを表すlayoutを変更する
 		* 画像の種類によって最適なメモリ配置が異なるため明示的にバリアを使って遷移させる必要がある。
 		*/
-		void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+		void TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipMapLevels);
 
 		/**
 		* @fn
@@ -637,6 +646,8 @@ namespace Core
 			app->framebuffer_resized_ = true;
 		}
 
+		void GenerateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipmapLevels);
+
 	private:
 		GLFWwindow* window_;
 		VkInstance instance_;
@@ -673,6 +684,7 @@ namespace Core
 
 		std::vector<VkBuffer> uniform_buffers_;
 		std::vector<VkDeviceMemory> uniform_buffers_memory_;
+		uint32_t mip_levels_;
 		VkImage texture_image_;
 		VkDeviceMemory image_device_memory_;
 		VkImageView texture_image_view_;

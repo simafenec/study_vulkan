@@ -609,11 +609,11 @@ namespace Core {
 	void VulkanApplication::CreateImageViews() {
 		swap_chain_image_views_.resize(swap_chain_images_.size());
 		for (size_t index = 0; index < swap_chain_images_.size(); index++) {
-			swap_chain_image_views_[index] = CreateImageView(swap_chain_images_[index], swap_chain_image_format_, VK_IMAGE_ASPECT_COLOR_BIT);
+			swap_chain_image_views_[index] = CreateImageView(swap_chain_images_[index], swap_chain_image_format_, VK_IMAGE_ASPECT_COLOR_BIT, mip_levels_);
 		}
 	}
 
-	VkImageView VulkanApplication::CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags)
+	VkImageView VulkanApplication::CreateImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipMapLevels)
 	{
 		VkImageViewCreateInfo create_info{};
 		create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -622,7 +622,7 @@ namespace Core {
 		create_info.format = format;
 		create_info.subresourceRange.aspectMask = aspectFlags;
 		create_info.subresourceRange.baseMipLevel = 0;
-		create_info.subresourceRange.levelCount = 1;
+		create_info.subresourceRange.levelCount = mipMapLevels;
 		create_info.subresourceRange.baseArrayLayer = 0;
 		create_info.subresourceRange.layerCount = 1;
 
@@ -1139,6 +1139,7 @@ namespace Core {
 		CreateImage(
 			swap_chain_extent_.width,
 			swap_chain_extent_.height,
+			mip_levels_,
 			depthFormat,
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -1146,9 +1147,9 @@ namespace Core {
 			depth_image_,
 			depth_image_device_memory_
 		);
-		depth_image_view_ = CreateImageView(depth_image_, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+		depth_image_view_ = CreateImageView(depth_image_, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, mip_levels_);
 
-		TransitionImageLayout(depth_image_, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+		TransitionImageLayout(depth_image_, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, mip_levels_);
 
 	}
 	VkFormat VulkanApplication::FindSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
@@ -1187,6 +1188,9 @@ namespace Core {
 		{
 			throw std::runtime_error("テクスチャの読み込みに失敗しました！");
 		}
+		// ミップマップの数を決定
+		// オリジナルの画像 + 2のn乗のn枚分がミップマップにできる (2^0(オリジナル), 2^1(半分) + ... )
+		mip_levels_ = static_cast<uint32_t>(std::floor(std::log2(std::max(textureWidth, textureHeight)))) + 1; 
 		// ステージングバッファを作って画像データを転送
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
@@ -1198,18 +1202,18 @@ namespace Core {
 		// 転送したら画像データも解放
 		stbi_image_free(pixelData);
 		// バッファに転送
-		CreateImage(textureWidth, textureHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image_, image_device_memory_);
+		CreateImage(textureWidth, textureHeight, mip_levels_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image_, image_device_memory_);
 		// 画像レイアウトをTRANSFER用に変更する
-		TransitionImageLayout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		TransitionImageLayout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mip_levels_);
 		// バッファからVkImageにデータをコピーする
 		CopyBufferToImage(stagingBuffer, texture_image_, static_cast<uint32_t>(textureWidth), static_cast<uint32_t>(textureHeight));
-		// 画像レイアウトをシェーダーアクセス出来る状態へ変化させる
-		TransitionImageLayout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		// ミップマップを作成　シェーダーがアクセスできる状態への変化は関数内で行う
+		GenerateMipmaps(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, textureWidth, textureHeight, mip_levels_);
 		//ステージングバッファを破棄する
 		vkDestroyBuffer(device_, stagingBuffer, nullptr);
 		vkFreeMemory(device_, stagingBufferMemory, nullptr);
 	}
-	void VulkanApplication::CreateImage(uint32_t textureWidth, uint32_t textureHeight, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory)
+	void VulkanApplication::CreateImage(uint32_t textureWidth, uint32_t textureHeight, uint32_t mipMapLevels, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory)
 	{
 		// まずはVkImageを生成するために必要な情報を埋めていく
 		VkImageCreateInfo createInfo{};
@@ -1218,7 +1222,7 @@ namespace Core {
 		createInfo.extent.width = textureWidth;
 		createInfo.extent.height = textureHeight;
 		createInfo.extent.depth = 1;
-		createInfo.mipLevels = 1;
+		createInfo.mipLevels = mipMapLevels;
 		createInfo.arrayLayers = 1;
 		createInfo.format = imageFormat;
 		createInfo.tiling = imageTiling;
@@ -1248,7 +1252,7 @@ namespace Core {
 		vkBindImageMemory(device_, image, deviceMemory, 0);
 
 	}
-	void VulkanApplication::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout)
+	void VulkanApplication::TransitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipMapLevels)
 	{
 		// コマンドバッファに実行する処理を記録する
 		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
@@ -1264,7 +1268,7 @@ namespace Core {
 		barrier.image = image;
 		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.levelCount = mipMapLevels;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.layerCount = 1;
 		// どの種類の操作がバリアの前に実行される必要があるのか / どの種類の操作がバリアを待機する必要があるのかを指定する
@@ -1358,7 +1362,7 @@ namespace Core {
 	}
 	void VulkanApplication::CreateTextureImageView()
 	{
-		texture_image_view_ = CreateImageView(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		texture_image_view_ = CreateImageView(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mip_levels_);
 	}
 	void VulkanApplication::CreateTextureSampler()
 	{
@@ -1382,7 +1386,7 @@ namespace Core {
 		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 		samplerInfo.mipLodBias = 0.0f;
 		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = 0.0f;
+		samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
 
 		if(vkCreateSampler(device_, &samplerInfo, nullptr, &texture_sampler_) != VK_SUCCESS)
 		{
@@ -1616,6 +1620,100 @@ namespace Core {
 			}
 		}
 		throw std::runtime_error("適切なメモリタイプを特定できませんでした");
+	}
+
+	// 実際は実行時にミップマップを生成することはしない…
+	void VulkanApplication::GenerateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipmapLevels)
+	{
+		//ミップマップ生成に使う linear blitting がサポートされているかどうかを確認する
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(physical_device_, imageFormat, &formatProperties);
+		if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+		{
+			throw std::runtime_error("物理デバイスのテクスチャ画像フォーマットが linear blitting をサポートしていません");
+		}
+
+		VkCommandBuffer commandBuffer = BeginSingleTimeCommands();
+		VkImageMemoryBarrier barrier{};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.image = image;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+		barrier.subresourceRange.levelCount = 1;
+
+		int32_t mipWidth = texWidth;
+		int32_t mipHeight = texHeight;
+		for (uint32_t i = 1; i < mipmapLevels; i++)
+		{
+			barrier.subresourceRange.baseMipLevel = i - 1;
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+			vkCmdPipelineBarrier(commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier
+			);
+
+			VkImageBlit blit{};
+			blit.srcOffsets[0] = { 0, 0, 0 };
+			blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+			blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.srcSubresource.baseArrayLayer = 0;
+			blit.srcSubresource.layerCount = 1;
+			blit.srcSubresource.mipLevel = i - 1;
+
+			blit.dstOffsets[0] = { 0, 0, 0 };
+			blit.dstOffsets[1] = { mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1 };
+			blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			blit.dstSubresource.baseArrayLayer = 0;
+			blit.dstSubresource.layerCount = 1;
+			blit.dstSubresource.mipLevel = i;
+			// ミップマップ生成コマンドを記録
+			vkCmdBlitImage(commandBuffer,
+				image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				1, &blit,
+				VK_FILTER_LINEAR
+			);
+			// 生成したミップマップをシェーダーからアクセスできる状態にする
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+			vkCmdPipelineBarrier(
+				commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier
+			);
+
+			if (mipWidth > 1) mipWidth /= 2;
+			if (mipHeight > 1) mipHeight /= 2;
+		}
+
+		barrier.subresourceRange.baseMipLevel = mipmapLevels - 1;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+		vkCmdPipelineBarrier(commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier
+		);
+
+		EndSingleTimeCommands(commandBuffer);
 	}
 
 	void VulkanApplication::RecreateSwapChain() {
