@@ -48,6 +48,7 @@ namespace Core {
 		CreateDescriptorSetLayout();
 		CreateGraphicsPipeline();
 		CreateCommandPool();
+		CreateColorResources();
 		CreateDepthResources();
 		CreateFramebuffers();
 		CreateTextureImage();
@@ -119,6 +120,9 @@ namespace Core {
 		for (auto image_view : swap_chain_image_views_) {
 			vkDestroyImageView(device_, image_view, nullptr);
 		}
+		vkDestroyImageView(device_, color_image_view_, nullptr);
+		vkDestroyImage(device_, color_image_, nullptr);
+		vkFreeMemory(device_, color_image_memory_, nullptr);
 		vkDestroyImageView(device_, depth_image_view_, nullptr);
 		vkDestroyImage(device_, depth_image_, nullptr);
 		vkFreeMemory(device_, depth_image_device_memory_, nullptr);
@@ -422,6 +426,7 @@ namespace Core {
 		for (const auto& device : devices) {
 			if (IsDeviceSuitable(device)) {
 				physical_device_ = device;
+				msaa_samples_ = GetMaxUsableSampleCount();
 				break;
 			}
 		}
@@ -454,6 +459,7 @@ namespace Core {
 		// 現状は何も設定しない。　今後様々な機能を使いたくなった時に適宜フラグを立てていく
 		VkPhysicalDeviceFeatures device_features{};
 		device_features.samplerAnisotropy = VK_TRUE;
+		device_features.sampleRateShading = VK_TRUE;
 		
 		// 論理デバイスの生成情報を次にまとめる。
 		VkDeviceCreateInfo create_info{};
@@ -758,13 +764,13 @@ namespace Core {
 	void VulkanApplication::CreateRenderPass() {
 		VkAttachmentDescription color_attachment{};
 		color_attachment.format = swap_chain_image_format_;
-		color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		color_attachment.samples = msaa_samples_;
 		color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 		color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
 		VkAttachmentReference color_attachment_reference{};
 		color_attachment_reference.attachment = 0;
@@ -773,7 +779,7 @@ namespace Core {
 		// 深度テクスチャのアタッチメント設定
 		VkAttachmentDescription depth_attachment{};
 		depth_attachment.format = FindDepthFormat();
-		depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depth_attachment.samples = msaa_samples_;
 		depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 		depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;				// どうせ描画が完了したら書き換わるので保存は気にしない
 		depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -785,11 +791,26 @@ namespace Core {
 		depth_attachment_ref.attachment = 1;
 		depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+		// MSAA用のアタッチメント設定
+		VkAttachmentDescription color_attachment_resolve{};
+		color_attachment_resolve.format = swap_chain_image_format_;
+		color_attachment_resolve.samples = VK_SAMPLE_COUNT_1_BIT;
+		color_attachment_resolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		color_attachment_resolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		color_attachment_resolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		color_attachment_resolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		color_attachment_resolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		color_attachment_resolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+		VkAttachmentReference color_attachment_resolve_ref{};
+		color_attachment_resolve_ref.attachment = 2;
+		color_attachment_resolve_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
 		VkSubpassDescription subpass{};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &color_attachment_reference;
+		subpass.pResolveAttachments = &color_attachment_resolve_ref;
 		subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
 		// サブパス依存性設定
@@ -798,12 +819,12 @@ namespace Core {
 		// 今はサブパスが一つしかないので0番目のインデックスを指定
 		dependency.dstSubpass = 0;
 		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-		dependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 		
 
-		std::array<VkAttachmentDescription, 2 > attachments = { color_attachment, depth_attachment };
+		std::array<VkAttachmentDescription, 3 > attachments = { color_attachment, depth_attachment, color_attachment_resolve};
 
 		VkRenderPassCreateInfo render_pass_info{};
 		render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -908,9 +929,9 @@ namespace Core {
 		// マルチサンプリング設定
 		VkPipelineMultisampleStateCreateInfo multisampling{};
 		multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-		multisampling.sampleShadingEnable = VK_FALSE;
-		multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-		multisampling.minSampleShading = 1.0f;
+		multisampling.sampleShadingEnable = VK_TRUE;
+		multisampling.rasterizationSamples = msaa_samples_;
+		multisampling.minSampleShading = 0.2f;
 		multisampling.pSampleMask = nullptr;
 		multisampling.alphaToCoverageEnable = VK_FALSE;
 		multisampling.alphaToOneEnable = VK_FALSE;
@@ -999,7 +1020,7 @@ namespace Core {
 		swap_chain_frame_buffers_.resize(swap_chain_image_views_.size());
 		// 各ImageViewに対応するフレームバッファを作成する。
 		for (size_t i = 0; i < swap_chain_image_views_.size(); i++) {
-			std::array<VkImageView,2> attachments = {swap_chain_image_views_[i], depth_image_view_};
+			std::array<VkImageView,3> attachments = {color_image_view_, depth_image_view_, swap_chain_image_views_[i] };
 			VkFramebufferCreateInfo frame_buffer_info{};
 			frame_buffer_info.renderPass = render_pass_;
 			frame_buffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -1140,6 +1161,7 @@ namespace Core {
 			swap_chain_extent_.width,
 			swap_chain_extent_.height,
 			mip_levels_,
+			msaa_samples_,
 			depthFormat,
 			VK_IMAGE_TILING_OPTIMAL,
 			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -1202,7 +1224,7 @@ namespace Core {
 		// 転送したら画像データも解放
 		stbi_image_free(pixelData);
 		// バッファに転送
-		CreateImage(textureWidth, textureHeight, mip_levels_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image_, image_device_memory_);
+		CreateImage(textureWidth, textureHeight, mip_levels_, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image_, image_device_memory_);
 		// 画像レイアウトをTRANSFER用に変更する
 		TransitionImageLayout(texture_image_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mip_levels_);
 		// バッファからVkImageにデータをコピーする
@@ -1213,7 +1235,7 @@ namespace Core {
 		vkDestroyBuffer(device_, stagingBuffer, nullptr);
 		vkFreeMemory(device_, stagingBufferMemory, nullptr);
 	}
-	void VulkanApplication::CreateImage(uint32_t textureWidth, uint32_t textureHeight, uint32_t mipMapLevels, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory)
+	void VulkanApplication::CreateImage(uint32_t textureWidth, uint32_t textureHeight, uint32_t mipMapLevels, VkSampleCountFlagBits numSamples, VkFormat imageFormat, VkImageTiling imageTiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& deviceMemory)
 	{
 		// まずはVkImageを生成するために必要な情報を埋めていく
 		VkImageCreateInfo createInfo{};
@@ -1228,7 +1250,7 @@ namespace Core {
 		createInfo.tiling = imageTiling;
 		createInfo.usage = usage;
 		createInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-		createInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+		createInfo.samples = numSamples;
 		createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
 		// imageを生成
@@ -1716,6 +1738,31 @@ namespace Core {
 		EndSingleTimeCommands(commandBuffer);
 	}
 
+	VkSampleCountFlagBits VulkanApplication::GetMaxUsableSampleCount()
+	{
+		VkPhysicalDeviceProperties physicalDeviceProperties;
+		vkGetPhysicalDeviceProperties(physical_device_, &physicalDeviceProperties);
+		
+		VkSampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+
+		if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+		if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+		if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+		if (counts & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
+		if (counts & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
+		if (counts & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
+
+		return VK_SAMPLE_COUNT_1_BIT;
+	}
+
+	void VulkanApplication::CreateColorResources()
+	{
+		VkFormat colorFormat = swap_chain_image_format_;
+
+		CreateImage(swap_chain_extent_.width, swap_chain_extent_.height, mip_levels_, msaa_samples_, colorFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, color_image_, color_image_memory_);
+		color_image_view_ = CreateImageView(color_image_, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+	}
+
 	void VulkanApplication::RecreateSwapChain() {
 		// ウィンドウの最小化対応
 		// ウィンドウが最小化されたときは再び展開されるまで待機する
@@ -1740,6 +1787,7 @@ namespace Core {
 		// 依存オブジェクトを再生成する
 		// image view と depth resource はフレームバッファよりも前に作ろうね
 		CreateImageViews();
+		CreateColorResources();
 		CreateDepthResources();
 		CreateRenderPass();
 		CreateGraphicsPipeline();

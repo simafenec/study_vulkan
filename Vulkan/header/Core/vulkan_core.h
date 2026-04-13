@@ -521,6 +521,7 @@ namespace Core
 			uint32_t textureWidth,
 			uint32_t textureHeight,
 			uint32_t mipMapLevels,
+			VkSampleCountFlagBits numSamples,
 			VkFormat imageFormat,
 			VkImageTiling imageTiling,
 			VkImageUsageFlags usage,
@@ -646,7 +647,26 @@ namespace Core
 			app->framebuffer_resized_ = true;
 		}
 
+		/**
+		* @fn
+		* @brief
+		* ミップマップ画像を生成する。なお、本来は事前にテクスチャ画像として保存することが多い。
+		*/
 		void GenerateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipmapLevels);
+
+		/**
+		* @fn
+		* @brief
+		* 現在のハードウェアで用いることができるマルチサンプリング数の最大値を取得する。
+		*/
+		VkSampleCountFlagBits GetMaxUsableSampleCount();
+
+		/**
+		* @fn
+		* @brief
+		* MSAA用のリソース類（Image / ImageView / DeviceMemory） を生成する
+		*/
+		void CreateColorResources();
 
 	private:
 		GLFWwindow* window_;
@@ -700,6 +720,11 @@ namespace Core
 		std::vector<VkFence> in_flight_fences_;
 		uint32_t current_frame_ = 0;
 		bool framebuffer_resized_ = false;
+		VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
+		// MSAA用のrender target
+		VkImage color_image_;
+		VkDeviceMemory color_image_memory_;
+		VkImageView color_image_view_;
 	};
 }
 
