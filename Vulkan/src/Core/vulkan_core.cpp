@@ -372,8 +372,8 @@ namespace Core {
 		// グラフィックコマンドをサポートしているキューのインデックスを取得する。
 		int graphics_queue_index = 0;
 		for (const auto& prop : queue_family_properties) {
-			if (prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-				indices.graphics_family_ = graphics_queue_index;
+			if ((prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) && (prop.queueFlags & VK_QUEUE_COMPUTE_BIT)) {
+				indices.graphics_and_compute_family_ = graphics_queue_index;
 			}
 			// Presentation Queueの存在チェック
 			VkBool32 presentSupported = false;
@@ -440,7 +440,7 @@ namespace Core {
 		QueueFamilyIndices indices = FindQueueFamilies(physical_device_);
 
 		std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
-		std::set<uint32_t> unique_queue_families = { indices.graphics_family_.value(), indices.present_family_.value() };
+		std::set<uint32_t> unique_queue_families = { indices.graphics_and_compute_family_.value(), indices.present_family_.value() };
 		float queue_priority = 1.0f;
 		for (uint32_t queue_family : unique_queue_families) {
 			VkDeviceQueueCreateInfo queue_create_info{};
@@ -482,8 +482,9 @@ namespace Core {
 		if (vkCreateDevice(physical_device_, &create_info, nullptr, &device_) != VK_SUCCESS) {
 			throw std::runtime_error("論理デバイスの生成に失敗しました！");
 		}
-		vkGetDeviceQueue(device_, indices.graphics_family_.value(), 0, &graphics_queue_);
+		vkGetDeviceQueue(device_, indices.graphics_and_compute_family_.value(), 0, &graphics_queue_);
 		vkGetDeviceQueue(device_, indices.present_family_.value(), 0, &present_queue_);
+		vkGetDeviceQueue(device_, indices.graphics_and_compute_family_.value(), 0, &compute_queue_);
 	}
 
 	void VulkanApplication::CreateSurface() {
@@ -578,8 +579,8 @@ namespace Core {
 		// グラフィックスキューとプレゼンテーションキューが異なる場合は画像をキュー間で共有できるように設定する。
 		// 明示的に所有権をやり取りすることで共有しないようにすることもできる
 		QueueFamilyIndices indices = FindQueueFamilies(physical_device_);
-		uint32_t queue_family_indices[] = { indices.graphics_family_.value(), indices.present_family_.value() };
-		if (indices.graphics_family_ != indices.present_family_) {
+		uint32_t queue_family_indices[] = { indices.graphics_and_compute_family_.value(), indices.present_family_.value() };
+		if (indices.graphics_and_compute_family_ != indices.present_family_) {
 			create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
 			create_info.queueFamilyIndexCount = 2;
 			create_info.pQueueFamilyIndices = queue_family_indices;
@@ -1043,7 +1044,7 @@ namespace Core {
 		VkCommandPoolCreateInfo pool_info{};
 		pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 		pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-		pool_info.queueFamilyIndex = queue_family_indices.graphics_family_.value();
+		pool_info.queueFamilyIndex = queue_family_indices.graphics_and_compute_family_.value();
 
 		if (vkCreateCommandPool(device_, &pool_info, nullptr, &command_pool_) != VK_SUCCESS) {
 			throw std::runtime_error("コマンドプールの生成に失敗しました！");

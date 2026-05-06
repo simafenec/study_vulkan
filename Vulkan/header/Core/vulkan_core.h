@@ -31,7 +31,7 @@ namespace Core
 	* キューファミリーのインデックスを扱う構造体
 	*/
 	struct QueueFamilyIndices {
-		std::optional<uint32_t> graphics_family_;
+		std::optional<uint32_t> graphics_and_compute_family_;
 		std::optional<uint32_t> present_family_;
 
 		/**
@@ -39,7 +39,7 @@ namespace Core
 		* @brief グラフィックスファミリーの条件を満たしているかどうか
 		*/
 		bool IsComplete() const {
-			return graphics_family_.has_value() && present_family_.has_value();
+			return graphics_and_compute_family_.has_value() && present_family_.has_value();
 		}
 	};
 	/**
@@ -713,6 +713,7 @@ namespace Core
 		VkDevice device_;
 		VkQueue graphics_queue_;
 		VkQueue present_queue_;
+		VkQueue compute_queue_;
 		VkSurfaceKHR surface_;
 		VkSwapchainKHR swap_chain_;
 		VkSwapchainKHR old_swap_chain_;
