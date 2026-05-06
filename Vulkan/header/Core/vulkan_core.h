@@ -109,6 +109,43 @@ namespace Core
 
 	/**
 	* @brief
+	* GPGPUパーティクル用構造体
+	*/
+	struct Particle
+	{
+		glm::vec2 position;		// パーティクル粒子の位置
+		glm::vec2 velocity;		// パーティクル粒子の速度ベクトル
+		glm::vec4 color;		// パーティクル粒子の色
+
+		static VkVertexInputBindingDescription GetBindingDescription()
+		{
+			VkVertexInputBindingDescription desc{};
+			desc.binding = 0;
+			desc.stride = sizeof(Particle);
+			desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX; // パーティクル粒子の頂点の位置や速度は頂点ごとに異なるため、頂点ごとにデータを読み進めるようにする
+			return desc;
+		}
+		static std::array<VkVertexInputAttributeDescription, 2> GetAttributeDescriptions()
+		{
+			std::array<VkVertexInputAttributeDescription, 2> attrs{};
+			// 速度のパラメータはCompute Shaderでしか使わない。よってVertex Bufferへの入力は位置と色で設定する。
+			// 0番目に頂点、1番目に色で与える
+			attrs[0].binding = 0;
+			attrs[0].format = VK_FORMAT_R32G32_SFLOAT; // 32byte signed float の２次元ベクトル
+			attrs[0].location = 0; // 0番目に与える
+			attrs[0].offset = offsetof(Particle, position);
+
+			attrs[1].binding = 0;
+			attrs[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+			attrs[1].location = 1;
+			attrs[1].offset = offsetof(Particle, color);
+
+			return attrs;
+		}
+	};
+
+	/**
+	* @brief
 	* ユニフォーム変数としてバッファに送るデータを定義した行列
 	*/
 	struct UniformBufferObject {
