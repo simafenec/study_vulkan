@@ -1,0 +1,39 @@
+// GLSLのバージョン 4.5.0を使うことを指定する。
+#version 450
+
+// 外部からUniform Buffer Objectとして渡されるパラメータ
+layout(binding = 0) uniform ParameterUBO {
+    float deltaTime; // フレーム間の経過時間
+} ubo;
+
+// パーティクル粒子構造体　受け取り / 計算結果の出力に使う
+struct Particle {
+    vec2 position;
+    vec2 velocity;
+    vec4 color;
+};
+
+// CPUとGPUとの間の構造体のアラインメント規則を一致させることを保証する std140 を指定する
+// ストレージバッファからの入力を受けとる
+layout(std140, binding=1) readonly buffer ParticleSSBOIn {
+    Particle particlesIn[]; // サイズ未指定の配列。　SSBOでは実行時まで渡すデータの個数が決まらないため、最後のメンバーに限りサイズ未指定の配列(runtime-sized array)を指定することが許される。
+};
+
+layout(std140, binding=2) buffer ParticleSSBOOut{
+    Particle particlesOut[];
+};
+
+// 現在のワークグループにおける計算シェーダーの呼び出し回数の定義
+// 今回は座標の一次元配列を扱うので、256スレッドを一次元で持つことを指定している。(256スレッドで並列に別のパーティクルを処理する)
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    // ワークグループ内で自分が何番目のスレッドかをインデックスで取得する
+    uint index = gl_GlobalInvocationID.x;
+    // 取得したインデックスに対応するパーティクル粒子を取得し、位置と速度を計算する
+    Particle particleIn = particlesIn[index];
+
+    particlesOut[index].position = particleIn.position + particleIn.velocity.xy * ubo.deltaTime;
+    particlesOut[index].velocity = particleIn.velocity;
+}
