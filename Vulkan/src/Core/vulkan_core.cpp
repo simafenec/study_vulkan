@@ -82,6 +82,8 @@ namespace Core {
 			vkDestroySemaphore(device_, image_available_semaphores_[index], nullptr);
 			vkDestroySemaphore(device_, render_finished_semaphores_[index], nullptr);
 			vkDestroyFence(device_, in_flight_fences_[index], nullptr);
+			vkDestroySemaphore(device_, compute_finished_semaphores_[index], nullptr);
+			vkDestroyFence(device_, compute_in_flight_fences_[index], nullptr);
 		}
 		CleanUpSwapChainDependents();
 		vkDestroySampler(device_, texture_sampler_, nullptr);
@@ -1136,7 +1138,10 @@ namespace Core {
 	void VulkanApplication::CreateSyncObjects() {
 		image_available_semaphores_.resize(kMaxFramesInFlight);
 		render_finished_semaphores_.resize(kMaxFramesInFlight);
+		compute_finished_semaphores_.resize(kMaxFramesInFlight);
+
 		in_flight_fences_.resize(kMaxFramesInFlight);
+		compute_in_flight_fences_.resize(kMaxFramesInFlight);
 
 		VkSemaphoreCreateInfo semaphore_info{};
 		semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1150,8 +1155,14 @@ namespace Core {
 		for (int index = 0; index < kMaxFramesInFlight; index++) {
 			if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &image_available_semaphores_[index]) != VK_SUCCESS ||
 				vkCreateSemaphore(device_, &semaphore_info, nullptr, &render_finished_semaphores_[index]) != VK_SUCCESS ||
-				vkCreateFence(device_, &fence_info, nullptr, &in_flight_fences_[index]) != VK_SUCCESS) {
-				throw std::runtime_error("同期オブジェクトの生成に失敗しました！");
+				vkCreateFence(device_, &fence_info, nullptr, &in_flight_fences_[index]) != VK_SUCCESS
+				) {
+				throw std::runtime_error("描画用同期オブジェクトの生成に失敗しました！");
+			}
+			if (vkCreateSemaphore(device_, &semaphore_info, nullptr, &compute_finished_semaphores_[index]) != VK_SUCCESS ||
+				vkCreateFence(device_, &fence_info, nullptr, &compute_in_flight_fences_[index]) != VK_SUCCESS
+				) {
+				throw std::runtime_error("Compute Shader用同期オブジェクトの生成に失敗しました！");
 			}
 		}
 	}

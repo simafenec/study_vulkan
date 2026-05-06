@@ -756,6 +756,10 @@ namespace Core
 		std::vector<VkSemaphore> image_available_semaphores_;
 		std::vector<VkSemaphore> render_finished_semaphores_;
 		std::vector<VkFence> in_flight_fences_;
+
+		std::vector<VkFence> compute_in_flight_fences_;
+		std::vector<VkSemaphore> compute_finished_semaphores_;
+
 		uint32_t current_frame_ = 0;
 		bool framebuffer_resized_ = false;
 		VkSampleCountFlagBits msaa_samples_ = VK_SAMPLE_COUNT_1_BIT;
